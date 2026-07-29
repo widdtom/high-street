@@ -91,7 +91,7 @@ function samplePath(d: string, perSegment = 96): P[] {
         const sign = largeArc !== sweep ? 1 : -1;
         const c = { x: mid.x + sign * h * nx, y: mid.y + sign * h * ny };
 
-        let a0 = Math.atan2(cur.y - c.y, cur.x - c.x);
+        const a0 = Math.atan2(cur.y - c.y, cur.x - c.x);
         let a1 = Math.atan2(p.y - c.y, p.x - c.x);
         if (sweep === 1 && a1 < a0) a1 += Math.PI * 2;
         if (sweep === 0 && a1 > a0) a1 -= Math.PI * 2;

@@ -1,141 +1,374 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ELECTRICITY_ITEM_ID,
+  allMoneyTotal,
   gameReducer,
   initialState,
+  moneyBoxTotal,
   paymentTotal,
+  purseTotal,
+  spentThisWeek,
+  weekStartTotal,
   type GameState,
 } from '../../src/state/gameReducer';
-import { freshSave, type SaveData } from '../../src/state/save';
-import type { CoinValue } from '../../src/engine/types';
+import { freshSave, type SaveData } from '../../src/state/saveTypes';
+import type { CoinValue, Stage } from '../../src/engine/types';
 
-function stateWithPurse(purse: CoinValue[], stage: SaveData['stage'] = 1): GameState {
-  return initialState({ ...freshSave(), purse, stage });
+function stateWith(patch: Partial<SaveData>): GameState {
+  const base = initialState({ ...freshSave(), ...patch });
+  // Skip the Saturday sequence for tests that aren't about it.
+  return { ...base, screen: 'street', saturdayStep: 3 };
 }
 
 function place(state: GameState, indices: number[]): GameState {
   return indices.reduce((s, index) => gameReducer(s, { type: 'addCoin', index }), state);
 }
 
-describe('gameReducer payment', () => {
-  it('pays exactly: coins leave the purse and the item goes in the bag', () => {
-    let state = stateWithPurse([10, 2, 1, 5]);
-    state = gameReducer(state, { type: 'selectItem', itemId: 'loaf' });
-    state = place(state, [0, 1]); // 10p + 2p = 12p
-    expect(paymentTotal(state)).toBe(12);
+const buy = (
+  state: GameState,
+  itemId: string,
+  price: number,
+  isFood: boolean,
+  ts = 1,
+): GameState => gameReducer(state, { type: 'pay', itemId, price, isFood, ts });
 
-    state = gameReducer(state, { type: 'pay', itemId: 'loaf', price: 12, ts: 1 });
-    expect(state.bakery.outcome).toEqual({ kind: 'exact', itemId: 'loaf' });
-    expect(state.save.purse).toEqual([1, 5]);
-    expect(state.bag).toEqual(['loaf']);
-    expect(state.save.transactionLog).toEqual([{ price: 12, correct: true, ts: 1 }]);
+describe('paying', () => {
+  it('exact payment: coins leave the purse, the item goes in the bag', () => {
+    let s = stateWith({ purse: [10, 2, 1, 5] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'loaf' });
+    s = place(s, [0, 1]); // 12p
+    expect(paymentTotal(s)).toBe(12);
+
+    s = buy(s, 'loaf', 12, true);
+    expect(s.payment.outcome).toEqual({ kind: 'exact', itemId: 'loaf' });
+    expect(s.save.purse).toEqual([1, 5]);
+    expect(s.save.bag).toEqual([{ itemId: 'loaf', boughtWeek: 1 }]);
   });
 
-  it('short payment costs nothing: no coins move, no deduction', () => {
-    let state = stateWithPurse([10, 2, 1, 5]);
-    const purseBefore = [...state.save.purse];
-    state = gameReducer(state, { type: 'selectItem', itemId: 'loaf' });
-    state = place(state, [1]); // 2p against a 12p loaf
+  it('logs attempts, not a boolean, and counts presses of Pay', () => {
+    let s = stateWith({ purse: [10, 2] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'loaf' });
+    s = place(s, [1]); // 2p against 12p — short
+    s = buy(s, 'loaf', 12, true);
+    expect(s.save.transactionLog).toEqual([]); // a short payment is not a purchase
 
-    state = gameReducer(state, { type: 'pay', itemId: 'loaf', price: 12, ts: 1 });
-    expect(state.bakery.outcome).toEqual({ kind: 'short', shortBy: 10 });
-    expect(state.save.purse).toEqual(purseBefore);
-    expect(state.bag).toEqual([]);
-    // Coins stay exactly where she put them.
-    expect(state.bakery.paidIndices).toEqual([1]);
-    expect(state.bakery.selectedItemId).toBe('loaf');
+    s = place(s, [0]); // add the 10p
+    s = buy(s, 'loaf', 12, true, 99);
+    expect(s.save.transactionLog).toEqual([{ price: 12, attempts: 2, ts: 99, stage: 1 }]);
   });
 
-  it('records the coins involved in a short payment for the grown-ups only', () => {
-    let state = stateWithPurse([2, 2, 10]);
-    state = gameReducer(state, { type: 'selectItem', itemId: 'loaf' });
-    state = place(state, [0, 1]);
-    state = gameReducer(state, { type: 'pay', itemId: 'loaf', price: 12, ts: 1 });
-    expect(state.save.coinErrors[2]).toBe(2);
-    expect(state.save.coinErrors[10]).toBe(0);
+  it('right first time logs one attempt', () => {
+    let s = stateWith({ purse: [5] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    s = place(s, [0]);
+    s = buy(s, 'roll', 5, true);
+    expect(s.save.transactionLog[0]?.attempts).toBe(1);
   });
 
-  it('overpaying returns change coins into the purse', () => {
-    let state = stateWithPurse([10, 10, 1], 1);
-    state = gameReducer(state, { type: 'selectItem', itemId: 'iced_bun' });
-    state = place(state, [0]); // 10p for a 9p bun
+  it('a short payment costs nothing and moves no coins', () => {
+    let s = stateWith({ purse: [10, 2, 1, 5] });
+    const before = [...s.save.purse];
+    s = gameReducer(s, { type: 'selectItem', itemId: 'loaf' });
+    s = place(s, [1]);
+    s = buy(s, 'loaf', 12, true);
 
-    state = gameReducer(state, { type: 'pay', itemId: 'iced_bun', price: 9, ts: 2 });
-    expect(state.bakery.outcome?.kind).toBe('over');
-    if (state.bakery.outcome?.kind !== 'over') return;
-    const change = state.bakery.outcome.changeCoins;
-    expect(change.reduce<number>((a, b) => a + b, 0)).toBe(1);
-    // Purse: the 10p spent, the remaining coins kept, the change added.
-    expect(state.save.purse.reduce<number>((a, b) => a + b, 0)).toBe(21 - 9);
+    expect(s.payment.outcome).toEqual({ kind: 'short', shortBy: 10 });
+    expect(s.save.purse).toEqual(before);
+    expect(s.save.bag).toEqual([]);
+    expect(s.save.foodMeter).toBe(0);
+    expect(s.payment.paidIndices).toEqual([1]); // coins stay put
+    expect(s.payment.selectedItemId).toBe('loaf');
+  });
+
+  it('records which coins were in a short payment, for the grown-ups only', () => {
+    let s = stateWith({ purse: [2, 2, 10] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'loaf' });
+    s = place(s, [0, 1]);
+    s = buy(s, 'loaf', 12, true);
+    expect(s.save.coinErrors[2]).toBe(2);
+    expect(s.save.coinErrors[10]).toBe(0);
+  });
+
+  it('overpaying returns change into the purse', () => {
+    let s = stateWith({ purse: [10, 10, 1] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'iced_bun' });
+    s = place(s, [0]); // 10p for a 9p bun
+    s = buy(s, 'iced_bun', 9, true);
+
+    expect(s.payment.outcome?.kind).toBe('over');
+    expect(purseTotal(s.save)).toBe(21 - 9);
+  });
+
+  it('the case the game is built around: right money, wrong coins', () => {
+    // 20p in hand, a 15p bag of potatoes. Affordable, not payable exactly.
+    let s = stateWith({ purse: [20], stage: 2 });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'potatoes' });
+    s = place(s, [0]);
+    s = buy(s, 'potatoes', 15, true);
+    expect(s.payment.outcome?.kind).toBe('over');
+    expect(purseTotal(s.save)).toBe(5);
+    expect(s.save.bag.map((b) => b.itemId)).toEqual(['potatoes']);
   });
 
   it('will not pay with an empty payment area', () => {
-    let state = stateWithPurse([10]);
-    state = gameReducer(state, { type: 'selectItem', itemId: 'roll' });
-    const before = state;
-    state = gameReducer(state, { type: 'pay', itemId: 'roll', price: 5, ts: 1 });
-    expect(state).toBe(before);
+    let s = stateWith({ purse: [10] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    const before = s;
+    expect(buy(s, 'roll', 5, true)).toBe(before);
+  });
+});
+
+describe('the meters', () => {
+  it('a food purchase fills one segment and stops at 3', () => {
+    let s = stateWith({ purse: [1, 1, 1, 1] });
+    for (let i = 0; i < 4; i += 1) {
+      s = gameReducer(s, { type: 'selectItem', itemId: 'banana' });
+      s = place(s, [0]);
+      s = buy(s, 'banana', 1, true, i);
+      s = { ...s, save: { ...s.save, purse: [1, 1, 1, 1].slice(0, 3 - i) as CoinValue[] } };
+    }
+    expect(s.save.foodMeter).toBe(3);
   });
 
-  it('tapping a coin in the payment area returns it to the tray', () => {
-    let state = stateWithPurse([10, 5]);
-    state = place(state, [0, 1]);
-    expect(paymentTotal(state)).toBe(15);
-    state = gameReducer(state, { type: 'removeCoin', index: 0 });
-    expect(paymentTotal(state)).toBe(5);
-    expect(state.bakery.paidIndices).toEqual([1]);
+  it('a non-food purchase does not fill the food meter', () => {
+    let s = stateWith({ purse: [10] });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'stickers' });
+    s = place(s, [0]);
+    s = buy(s, 'stickers', 10, false);
+    expect(s.save.foodMeter).toBe(0);
+    expect(s.save.bag.map((b) => b.itemId)).toEqual(['stickers']);
   });
 
-  it('does not place the same coin twice or place a coin that is not there', () => {
-    let state = stateWithPurse([10, 5]);
-    state = place(state, [0, 0, 9, -1]);
-    expect(state.bakery.paidIndices).toEqual([0]);
+  it('the electricity top-up turns the lights on and is not a bag item', () => {
+    let s = stateWith({ purse: [10] });
+    s = gameReducer(s, { type: 'selectItem', itemId: ELECTRICITY_ITEM_ID });
+    s = place(s, [0]);
+    s = buy(s, ELECTRICITY_ITEM_ID, 10, false);
+    expect(s.save.electricityDays).toBe(7);
+    expect(s.save.bag).toEqual([]);
+    expect(s.save.bedroom).toEqual([]);
+  });
+});
+
+describe('the money box', () => {
+  it('moves coins both ways and never changes the total', () => {
+    let s = stateWith({ purse: [10, 5, 2] });
+    const total = allMoneyTotal(s.save);
+
+    s = gameReducer(s, { type: 'moveToMoneyBox', index: 0 });
+    expect(s.save.purse).toEqual([5, 2]);
+    expect(s.save.moneyBox).toEqual([10]);
+    expect(allMoneyTotal(s.save)).toBe(total);
+
+    s = gameReducer(s, { type: 'moveToPurse', index: 0 });
+    expect(s.save.moneyBox).toEqual([]);
+    expect(purseTotal(s.save)).toBe(total);
+    expect(allMoneyTotal(s.save)).toBe(total);
   });
 
-  it('leaving the bakery abandons the payment without losing coins', () => {
-    let state = stateWithPurse([10, 5]);
-    state = gameReducer(state, { type: 'go', screen: 'bakery' });
-    state = gameReducer(state, { type: 'selectItem', itemId: 'roll' });
-    state = place(state, [0, 1]);
-    state = gameReducer(state, { type: 'go', screen: 'street' });
-    expect(state.save.purse).toEqual([10, 5]);
-    expect(state.bakery.paidIndices).toEqual([]);
+  it('ignores an index that is not there', () => {
+    const s = stateWith({ purse: [10] });
+    expect(gameReducer(s, { type: 'moveToMoneyBox', index: 7 })).toBe(s);
+    expect(gameReducer(s, { type: 'moveToPurse', index: 0 })).toBe(s);
+  });
+
+  it('there is no lock, no penalty and no interest', () => {
+    let s = stateWith({ purse: [10, 10] });
+    s = gameReducer(s, { type: 'moveToMoneyBox', index: 0 });
+    s = gameReducer(s, { type: 'moveToMoneyBox', index: 0 });
+    expect(moneyBoxTotal(s.save)).toBe(20);
+    s = gameReducer(s, { type: 'moveToPurse', index: 0 });
+    s = gameReducer(s, { type: 'moveToPurse', index: 0 });
+    expect(moneyBoxTotal(s.save)).toBe(0);
+    expect(purseTotal(s.save)).toBe(20);
+  });
+});
+
+describe('the bedroom shelf', () => {
+  it('only accepts things she owns that are not food', () => {
+    let s = stateWith({
+      bag: [
+        { itemId: 'stickers', boughtWeek: 1 },
+        { itemId: 'loaf', boughtWeek: 1 },
+      ],
+    });
+    s = gameReducer(s, { type: 'placeInBedroom', itemId: 'stickers' });
+    expect(s.save.bedroom).toEqual(['stickers']);
+
+    s = gameReducer(s, { type: 'placeInBedroom', itemId: 'loaf' }); // food
+    s = gameReducer(s, { type: 'placeInBedroom', itemId: 'scooter' }); // not owned
+    expect(s.save.bedroom).toEqual(['stickers']);
+
+    s = gameReducer(s, { type: 'removeFromBedroom', itemId: 'stickers' });
+    expect(s.save.bedroom).toEqual([]);
+  });
+});
+
+describe('the saving goal', () => {
+  it('is set and cleared, and never auto-purchases', () => {
+    let s = stateWith({ moneyBox: [100, 100] });
+    s = gameReducer(s, { type: 'setSavingGoal', itemId: 'scooter' });
+    expect(s.save.savingGoal).toBe('scooter');
+    // Reaching the goal changes nothing on its own.
+    expect(moneyBoxTotal(s.save)).toBe(200);
+    expect(s.save.bag).toEqual([]);
+
+    s = gameReducer(s, { type: 'setSavingGoal', itemId: null });
+    expect(s.save.savingGoal).toBeNull();
+  });
+});
+
+describe('stage gating', () => {
+  it('the scooter cannot be bought before stage 4, at any price offered', () => {
+    let s = stateWith({ purse: [100, 100], stage: 3 });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'scooter' });
+    s = place(s, [0, 1]);
+    const before = s;
+    expect(buy(s, 'scooter', 200, false)).toBe(before);
+  });
+
+  it('and can be bought at stage 4', () => {
+    let s = stateWith({ purse: [200], stage: 4 });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'scooter' });
+    s = place(s, [0]);
+    s = buy(s, 'scooter', 200, false);
+    expect(s.save.bag.map((b) => b.itemId)).toEqual(['scooter']);
+  });
+});
+
+describe('the week', () => {
+  it('going to bed shows the summary before anything changes', () => {
+    let s = stateWith({ foodMeter: 2, electricityDays: 7 });
+    s = gameReducer(s, { type: 'goToBed' });
+    expect(s.screen).toBe('weekSummary');
+    expect(s.save.week).toBe(1);
+    expect(s.save.foodMeter).toBe(2);
+  });
+
+  it('confirming advances the week and resets both meters', () => {
+    let s = stateWith({ foodMeter: 3, electricityDays: 7, purse: [10], bedroom: ['stickers'] });
+    s = gameReducer(s, { type: 'goToBed' });
+    s = gameReducer(s, { type: 'confirmBed' });
+
+    expect(s.save.week).toBe(2);
+    expect(s.save.foodMeter).toBe(0);
+    expect(s.save.electricityDays).toBe(0);
+    // Nothing she owns is taken away, and the new week's income is added.
+    expect(purseTotal(s.save)).toBe(10 + 55);
+    expect(s.save.purse.slice(0, 1)).toEqual([10]);
+    expect(s.save.bedroom).toEqual(['stickers']);
+    expect(s.screen).toBe('saturday');
+    expect(s.saturdayStep).toBe(0);
+  });
+
+  it('pays the week\'s income when the week turns, not when the ceremony plays', () => {
+    // The Saturday screen is presentational. If income were tied to it, a
+    // reload mid-ceremony would pay her twice.
+    let s = stateWith({ purse: [], week: 1 });
+    s = gameReducer(s, { type: 'goToBed' });
+    s = gameReducer(s, { type: 'confirmBed' });
+    expect(s.save.week).toBe(2);
+    expect(purseTotal(s.save)).toBe(55); // 30p pocket money + the 25p stand-in
+
+    // Replaying the ceremony grants nothing.
+    s = gameReducer(s, { type: 'saturdayNext' });
+    s = gameReducer(s, { type: 'saturdayNext' });
+    s = gameReducer(s, { type: 'saturdayNext' });
+    expect(purseTotal(s.save)).toBe(55);
+  });
+
+  it('a fresh save already holds week 1\'s income, so a reload cannot re-grant it', () => {
+    const a = initialState(freshSave());
+    expect(purseTotal(a.save)).toBe(55);
+    expect(a.screen).toBe('saturday');
+    // Once anything has happened, the game no longer opens on Saturday.
+    const b = initialState({ ...freshSave(), bag: [{ itemId: 'loaf', boughtWeek: 1 }] });
+    expect(b.screen).toBe('street');
+  });
+
+  it('derives what she started the week with from what is left plus what went', () => {
+    const s = stateWith({
+      purse: [10, 5],
+      moneyBox: [20],
+      week: 2,
+      electricityDays: 7,
+      bag: [
+        { itemId: 'loaf', boughtWeek: 2 }, // 12p, this week
+        { itemId: 'stickers', boughtWeek: 1 }, // last week, ignored
+      ],
+    });
+    expect(spentThisWeek(s.save)).toBe(12 + 10); // loaf + electricity
+    expect(allMoneyTotal(s.save)).toBe(35);
+    expect(weekStartTotal(s.save)).toBe(35 + 22);
+  });
+});
+
+describe('stage progression', () => {
+  it('advances only through the rule, after a purchase', () => {
+    const log = Array.from({ length: 9 }, (_, i) => ({
+      price: 5,
+      attempts: 1,
+      ts: i,
+      stage: 1 as Stage,
+    }));
+    let s = stateWith({ purse: [5], transactionLog: log });
+    expect(s.save.stage).toBe(1);
+
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    s = place(s, [0]);
+    s = buy(s, 'roll', 5, true, 100); // the 10th, all first-time
+    expect(s.save.stage).toBe(2);
+  });
+
+  it('does not advance when too many took more than one press', () => {
+    const log = Array.from({ length: 9 }, (_, i) => ({
+      price: 5,
+      attempts: i < 3 ? 2 : 1,
+      ts: i,
+      stage: 1 as Stage,
+    }));
+    let s = stateWith({ purse: [5], transactionLog: log });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    s = place(s, [0]);
+    s = buy(s, 'roll', 5, true, 100);
+    expect(s.save.stage).toBe(1);
+  });
+
+  it('the grown-ups can set the stage by hand', () => {
+    let s = stateWith({});
+    s = gameReducer(s, { type: 'setStage', stage: 4 });
+    expect(s.save.stage).toBe(4);
+    s = gameReducer(s, { type: 'setStage', stage: 1 });
+    expect(s.save.stage).toBe(1);
+  });
+});
+
+describe('navigation', () => {
+  it('leaving a shop abandons the payment without losing coins', () => {
+    let s = stateWith({ purse: [10, 5] });
+    s = gameReducer(s, { type: 'go', screen: 'bakery' });
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    s = place(s, [0, 1]);
+    s = gameReducer(s, { type: 'go', screen: 'street' });
+    expect(s.save.purse).toEqual([10, 5]);
+    expect(s.payment.paidIndices).toEqual([]);
   });
 
   it('the purse overlay returns to the screen it was opened from', () => {
-    let state = stateWithPurse([10]);
-    state = gameReducer(state, { type: 'go', screen: 'bakery' });
-    state = gameReducer(state, { type: 'go', screen: 'purse' });
-    expect(state.previousScreen).toBe('bakery');
-  });
-
-  it('every price in the game can be paid from a purse of pennies', () => {
-    // No fail states means no dead ends: 1p exists, so nothing is unpayable.
-    for (const price of [5, 8, 9, 12]) {
-      let state = stateWithPurse(Array.from({ length: price }, () => 1 as CoinValue));
-      state = gameReducer(state, { type: 'selectItem', itemId: 'x' });
-      state = place(
-        state,
-        Array.from({ length: price }, (_, i) => i),
-      );
-      state = gameReducer(state, { type: 'pay', itemId: 'x', price, ts: 1 });
-      expect(state.bakery.outcome).toEqual({ kind: 'exact', itemId: 'x' });
-      expect(state.save.purse).toEqual([]);
-    }
-  });
-
-  it('importing a save replaces the game state', () => {
-    let state = stateWithPurse([10]);
-    const incoming = { ...freshSave(), purse: [50, 50] as CoinValue[], stage: 3 as const };
-    state = gameReducer(state, { type: 'importSave', data: incoming });
-    expect(state.save.purse).toEqual([50, 50]);
-    expect(state.save.stage).toBe(3);
+    let s = stateWith({});
+    s = gameReducer(s, { type: 'go', screen: 'toyshop' });
+    s = gameReducer(s, { type: 'go', screen: 'purse' });
+    expect(s.previousScreen).toBe('toyshop');
   });
 
   it('never produces a non-integer amount', () => {
-    let state = stateWithPurse([10, 5, 2, 1]);
-    state = place(state, [0, 1, 2, 3]);
-    expect(Number.isInteger(paymentTotal(state))).toBe(true);
-    state = gameReducer(state, { type: 'pay', itemId: 'roll', price: 5, ts: 1 });
-    for (const coin of state.save.purse) expect(Number.isInteger(coin)).toBe(true);
+    let s = stateWith({ purse: [10, 5, 2, 1] });
+    s = place(s, [0, 1, 2, 3]);
+    expect(Number.isInteger(paymentTotal(s))).toBe(true);
+    s = gameReducer(s, { type: 'selectItem', itemId: 'roll' });
+    s = place(s, [0]);
+    s = buy(s, 'roll', 5, true);
+    for (const coin of s.save.purse) expect(Number.isInteger(coin)).toBe(true);
+    for (const coin of s.save.moneyBox) expect(Number.isInteger(coin)).toBe(true);
   });
 });

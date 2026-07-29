@@ -20,7 +20,9 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
 
-    "types": ["vite/client", "vite-plugin-pwa/client"]
+    // "node" is here for the test suite only — tests read fixtures off disk.
+    // No src/ file may import a Node builtin; the app runs in a browser.
+    "types": ["vite/client", "vite-plugin-pwa/client", "node"]
   },
   "include": ["src", "tests"]
 }

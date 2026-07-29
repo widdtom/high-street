@@ -75,13 +75,38 @@ try {
   const save = () =>
     page.evaluate(() => JSON.parse(localStorage.getItem('highstreet.save.v2') ?? 'null'));
 
+  /** Walk the three Saturday beats through to the street. */
+  async function playSaturday() {
+    await page.locator('[data-testid="collect-coins"]').click();
+    await page.waitForTimeout(1100);
+    for (let i = 0; i < 2; i += 1) {
+      await page.getByRole('button', { name: /next/i }).click();
+      await page.waitForTimeout(150);
+    }
+    await page.waitForTimeout(200);
+  }
+
   await page.goto(BASE, { waitUntil: 'networkidle' });
-  await page.screenshot({ path: `${SHOTS}/01-street.png` });
+  await page.screenshot({ path: `${SHOTS}/01-saturday.png` });
 
   console.log('\nSaturday sequence');
+  const beforeCoins = await save();
+  check('save is schema v2', beforeCoins?.schemaVersion === 2, `got ${beforeCoins?.schemaVersion}`);
+  check('week starts at 1', beforeCoins?.week === 1, `week ${beforeCoins?.week}`);
+  const purseBefore = beforeCoins.purse.reduce((a, b) => a + b, 0);
+  check("week 1's income is already banked", purseBefore === 55, `${purseBefore}p`);
+
+  await playSaturday();
+  await page.screenshot({ path: `${SHOTS}/02-street.png` });
   const startSave = await save();
-  check('save is schema v2', startSave?.schemaVersion === 2, `got ${startSave?.schemaVersion}`);
-  check('week starts at 1', startSave?.week === 1, `week ${startSave?.week}`);
+  // The ceremony is presentational. If it granted the money, a reload would
+  // pay her twice.
+  check(
+    'playing the Saturday ceremony grants nothing by itself',
+    startSave.purse.reduce((a, b) => a + b, 0) === purseBefore,
+    `${purseBefore} -> ${startSave.purse.reduce((a, b) => a + b, 0)}`,
+  );
+  check('the street is reachable', await page.getByRole('button', { name: 'Bakery' }).isVisible());
 
   console.log('\nBakery: a short payment then an exact one');
   await page.getByRole('button', { name: 'Bakery' }).click();
@@ -150,7 +175,86 @@ try {
   await page.evaluate(() => localStorage.setItem('highstreet.save.v2', '{{{ not json'));
   await page.reload({ waitUntil: 'networkidle' });
   check('a corrupt save falls back to a fresh game', (await save())?.schemaVersion === 2);
-  check('the app still renders', await page.locator('button[aria-label="Purse"]').isVisible());
+  // A fresh game opens on the Saturday ceremony, where the meter bar is hidden.
+  check('the app still renders', await page.locator('[data-testid="collect-coins"]').isVisible());
+  await playSaturday();
+  check('and is playable', await page.getByRole('button', { name: 'Bakery' }).isVisible());
+
+  console.log('\nA real v1 save migrates in place');
+  // Captured from the running prompt-1 build, under the OLD key.
+  const V1 = {
+    schemaVersion: 1,
+    purse: [10, 10, 5, 2, 2, 1],
+    stage: 2,
+    transactionLog: [
+      { price: 5, correct: true, ts: 1785321333799 },
+      { price: 12, correct: false, ts: 1785322732569 },
+    ],
+    coinErrors: { 1: 0, 2: 1, 5: 0, 10: 0, 20: 0, 50: 0, 100: 0, 200: 0 },
+  };
+  await page.evaluate((v1) => {
+    localStorage.clear();
+    localStorage.setItem('highstreet.save.v1', JSON.stringify(v1));
+  }, V1);
+  await page.reload({ waitUntil: 'networkidle' });
+  const migrated = await save();
+  check('a v1 save is found and upgraded', migrated?.schemaVersion === 2);
+  check('the purse survives coin for coin', JSON.stringify(migrated?.purse) === JSON.stringify(V1.purse), JSON.stringify(migrated?.purse));
+  check('the stage survives', migrated?.stage === 2);
+  check('coinErrors survive', migrated?.coinErrors['2'] === 1);
+  check('every log entry survives', migrated?.transactionLog.length === 2);
+  check(
+    'correct/false became attempts 1/2',
+    migrated?.transactionLog[0]?.attempts === 1 && migrated?.transactionLog[1]?.attempts === 2,
+    JSON.stringify(migrated?.transactionLog.map((t) => t.attempts)),
+  );
+  check('the new v2 fields are present', migrated?.week === 1 && Array.isArray(migrated?.moneyBox));
+
+  console.log('\nWrong coins give change, in all four shops');
+  // A purse of a single 20p against prices that 20p cannot make exactly.
+  const SHOPS = [
+    ['Bakery', 'Loaf of bread', 12],
+    ['Greengrocer', 'Bag of potatoes', 15],
+    ['Toy shop', 'Sticker sheet', 10],
+    ['Charity shop', null, null],
+  ];
+  for (const [shop, itemName, price] of SHOPS) {
+    await page.evaluate(() => {
+      const k = 'highstreet.save.v2';
+      const s = JSON.parse(localStorage.getItem(k));
+      s.purse = [20];
+      s.stage = 2;
+      localStorage.setItem(k, JSON.stringify(s));
+    });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: shop }).click();
+    await page.waitForTimeout(200);
+
+    // The charity shop's stock rotates, so take whatever is on the shelf.
+    const card = itemName === null
+      ? page.locator('[data-testid="charity-item"]').first()
+      // `exact` matters in the toy shop: the goal star's label contains the
+      // item name too ("Save for Sticker sheet").
+      : page.getByRole('button', { name: itemName, exact: true });
+    const chargedRaw = itemName === null
+      ? await page.locator('[data-testid="charity-item"]').first().getAttribute('data-item-id')
+      : null;
+    await card.click();
+    await page.locator('[data-testid="purse-tray"]').getByRole('button', { name: '20p' }).click();
+    await page.getByRole('button', { name: 'Pay' }).click();
+    await page.waitForTimeout(350);
+
+    const outcome = await page.locator('[data-testid="outcome-overlay"]').getAttribute('data-outcome');
+    const after = await save();
+    const left = after.purse.reduce((a, b) => a + b, 0);
+    const paid = price ?? 20 - left;
+    check(
+      `${shop}: overpaying with a 20p returns the right change`,
+      outcome === 'over' && left === 20 - paid,
+      `outcome=${outcome} left=${left}p${chargedRaw ? ` (${chargedRaw})` : ''}`,
+    );
+    await page.screenshot({ path: `${SHOTS}/2${SHOPS.indexOf(SHOPS.find((s) => s[0] === shop))}-${shop.replace(/\s+/g, '-')}.png` });
+  }
 
   console.log('\nPrivacy');
   check('zero off-origin requests', offsite.length === 0, offsite.slice(0, 3).join(', '));

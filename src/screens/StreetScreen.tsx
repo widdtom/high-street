@@ -1,3 +1,4 @@
+import type { Screen } from '../state/gameReducer';
 import { useGame } from '../state/GameContext';
 
 interface Shop {
@@ -46,9 +47,9 @@ const Heart = (
 
 const SHOPS: Shop[] = [
   { id: 'bakery', name: 'Bakery', open: true, awning: '#e07a5f', wall: '#fbf3e4', art: Bread },
-  { id: 'greengrocer', name: 'Greengrocer', open: false, awning: '#6aa84f', wall: '#f1efe6', art: Apple },
-  { id: 'toyshop', name: 'Toy shop', open: false, awning: '#4a90d9', wall: '#f1efe6', art: Bear },
-  { id: 'charity', name: 'Charity shop', open: false, awning: '#9b6bb5', wall: '#f1efe6', art: Heart },
+  { id: 'greengrocer', name: 'Greengrocer', open: true, awning: '#6aa84f', wall: '#f3f7ee', art: Apple },
+  { id: 'toyshop', name: 'Toy shop', open: true, awning: '#4a90d9', wall: '#eef4fb', art: Bear },
+  { id: 'charity', name: 'Charity shop', open: true, awning: '#9b6bb5', wall: '#f6f0fa', art: Heart },
 ];
 
 function Shopfront({ shop, onEnter }: { shop: Shop; onEnter: () => void }) {
@@ -102,19 +103,9 @@ function Shopfront({ shop, onEnter }: { shop: Shop; onEnter: () => void }) {
   );
 }
 
-function PurseIcon() {
-  return (
-    <svg viewBox="0 0 48 48" className="h-11 w-11" role="presentation">
-      <path d="M6 18 H42 A4 4 0 0 1 46 22 V38 A4 4 0 0 1 42 42 H6 A4 4 0 0 1 2 38 V22 A4 4 0 0 1 6 18 Z" fill="#a0522d" />
-      <path d="M12 18 Q12 6 24 6 Q36 6 36 18" stroke="#8b4513" strokeWidth="4" fill="none" />
-      <circle cx="38" cy="30" r="5" fill="#d4af37" />
-    </svg>
-  );
-}
-
 /**
- * The high street. Only the bakery is open; the rest are drawn but shut.
- * No text instructions — the shops are visually obvious.
+ * The high street. All four shops are open. No text instructions — the shops
+ * are visually obvious, and the awning colour is the only thing that names them.
  */
 export default function StreetScreen() {
   const { dispatch } = useGame();
@@ -125,28 +116,19 @@ export default function StreetScreen() {
       <div className="relative flex min-h-0 flex-1 flex-col justify-end bg-gradient-to-b from-sky-300 to-sky-100 px-3 pt-3">
         <button
           type="button"
-          onClick={() => dispatch({ type: 'go', screen: 'purse' })}
-          aria-label="Purse"
-          className="tappable absolute right-3 top-3 z-10 rounded-full border-4 border-amber-900/30 bg-amber-100 p-1.5 shadow-lg active:scale-90"
-        >
-          <PurseIcon />
-        </button>
-
-        <button
-          type="button"
           onClick={() => dispatch({ type: 'go', screen: 'parent' })}
           aria-label="Grown-ups"
-          className="tappable absolute left-3 top-3 z-10 rounded-full border-2 border-stone-400/50 bg-white/60 px-3 py-1 text-xs font-semibold text-stone-500 opacity-70 active:scale-95"
+          className="tappable absolute left-3 top-2 z-10 rounded-full border-2 border-stone-400/50 bg-white/60 px-3 py-0.5 text-xs font-semibold text-stone-500 opacity-70 active:scale-95"
         >
           Grown-ups
         </button>
 
-        <div className="flex h-[74%] min-h-0 items-end gap-3 sm:gap-4">
+        <div className="flex h-[80%] min-h-0 items-end gap-3 sm:gap-4">
           {SHOPS.map((shop) => (
             <Shopfront
               key={shop.id}
               shop={shop}
-              onEnter={() => shop.open && dispatch({ type: 'go', screen: 'bakery' })}
+              onEnter={() => dispatch({ type: 'go', screen: shop.id as Screen })}
             />
           ))}
         </div>

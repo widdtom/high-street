@@ -1,135 +1,47 @@
 /* =============================================================================
- * MONEY IS INTEGER PENCE. The purse is an array of coins she actually holds,
- * never a balance. She holds coins, not a number. This matters.
+ * MONEY IS INTEGER PENCE. The purse and money box are arrays of the coins she
+ * actually holds, never balances. She holds coins, not a number.
  * ============================================================================= */
 
-import type { CoinValue, Pence, Stage } from '../engine/types';
+import { migrateToCurrent } from './migrate';
+import {
+  CURRENT_SCHEMA_VERSION,
+  SAVE_KEY,
+  SAVE_KEY_V1,
+  emptyCoinErrors,
+  freshSave,
+  type SaveData,
+} from './saveTypes';
 
-export const SAVE_KEY = 'highstreet.save.v1';
-export const CURRENT_SCHEMA_VERSION = 1;
-
-/** One recorded attempt to pay for something. */
-export interface TransactionRecord {
-  price: Pence;
-  correct: boolean;
-  ts: number;
-}
-
-/** Counts of how often each coin was involved in a mistaken payment. */
-export type CoinErrorMap = Record<CoinValue, number>;
-
-export interface SaveData {
-  schemaVersion: number;
-  /** The actual coins she holds, not a total. */
-  purse: CoinValue[];
-  stage: Stage;
-  transactionLog: TransactionRecord[];
-  coinErrors: CoinErrorMap;
-}
-
-const VALID_COIN_VALUES: readonly number[] = [1, 2, 5, 10, 20, 50, 100, 200];
-
-export function emptyCoinErrors(): CoinErrorMap {
-  return { 1: 0, 2: 0, 5: 0, 10: 0, 20: 0, 50: 0, 100: 0, 200: 0 };
-}
-
-/**
- * A brand new game. She starts with her pocket money as real coins:
- * 10p + 10p + 5p + 2p + 2p + 1p = 30p, deliberately spread across
- * denominations so the first shop visit has something to think about.
- */
-export function freshSave(): SaveData {
-  return {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    purse: [10, 10, 5, 2, 2, 1],
-    stage: 1,
-    transactionLog: [],
-    coinErrors: emptyCoinErrors(),
-  };
-}
-
-/**
- * Migration hook. Each future schema version adds a step here that upgrades
- * the previous shape in place. Returns null if the data cannot be salvaged.
- */
-function migrate(raw: Record<string, unknown>): SaveData | null {
-  const version = typeof raw['schemaVersion'] === 'number' ? raw['schemaVersion'] : 0;
-
-  if (version > CURRENT_SCHEMA_VERSION) {
-    // A save from a newer build of the app. Don't guess — start fresh.
-    return null;
-  }
-
-  // v0 -> v1 and any future steps go here, e.g.:
-  // if (version < 2) { raw = upgradeV1ToV2(raw); }
-
-  return validate(raw);
-}
-
-function isStage(value: unknown): value is Stage {
-  return value === 1 || value === 2 || value === 3 || value === 4;
-}
-
-/** Coerce unknown parsed JSON into a SaveData, or null if it is not usable. */
-function validate(raw: unknown): SaveData | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const obj = raw as Record<string, unknown>;
-
-  const purseRaw = obj['purse'];
-  if (!Array.isArray(purseRaw)) return null;
-  const purse: CoinValue[] = [];
-  for (const entry of purseRaw) {
-    if (typeof entry !== 'number' || !Number.isInteger(entry)) return null;
-    if (!VALID_COIN_VALUES.includes(entry)) return null;
-    purse.push(entry as CoinValue);
-  }
-
-  const stage = isStage(obj['stage']) ? obj['stage'] : 1;
-
-  const logRaw = obj['transactionLog'];
-  const transactionLog: TransactionRecord[] = [];
-  if (Array.isArray(logRaw)) {
-    for (const entry of logRaw) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const rec = entry as Record<string, unknown>;
-      const price = rec['price'];
-      const correct = rec['correct'];
-      const ts = rec['ts'];
-      if (typeof price !== 'number' || !Number.isInteger(price)) continue;
-      if (typeof correct !== 'boolean') continue;
-      if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
-      transactionLog.push({ price, correct, ts });
-    }
-  }
-
-  const coinErrors = emptyCoinErrors();
-  const errRaw = obj['coinErrors'];
-  if (typeof errRaw === 'object' && errRaw !== null) {
-    for (const value of VALID_COIN_VALUES) {
-      const count = (errRaw as Record<string, unknown>)[String(value)];
-      if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
-        coinErrors[value as CoinValue] = count;
-      }
-    }
-  }
-
-  return {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    purse,
-    stage,
-    transactionLog,
-    coinErrors,
-  };
-}
+export {
+  CURRENT_SCHEMA_VERSION,
+  SAVE_KEY,
+  SAVE_KEY_V1,
+  emptyCoinErrors,
+  freshSave,
+} from './saveTypes';
+export type {
+  BagEntry,
+  CoinErrorMap,
+  FoodMeter,
+  SaveData,
+  SaveDataV1,
+  TransactionRecord,
+} from './saveTypes';
 
 /**
  * Read the save. Anything corrupt, unparseable, or from an unknown schema
  * falls back to a fresh game rather than crashing.
+ *
+ * A v1 save under the old key is migrated and rewritten under the v2 key. The
+ * v1 key is deliberately left in place as a belt-and-braces backup until the
+ * next successful write cycle — losing a child's teddy collection to a bad
+ * migration is not recoverable.
  */
 export function loadSave(): SaveData {
   let text: string | null = null;
   try {
-    text = localStorage.getItem(SAVE_KEY);
+    text = localStorage.getItem(SAVE_KEY) ?? localStorage.getItem(SAVE_KEY_V1);
   } catch {
     // Private mode, storage disabled, quota errors — play without persistence.
     return freshSave();
@@ -138,8 +50,7 @@ export function loadSave(): SaveData {
 
   try {
     const parsed: unknown = JSON.parse(text);
-    if (typeof parsed !== 'object' || parsed === null) return freshSave();
-    return migrate(parsed as Record<string, unknown>) ?? freshSave();
+    return migrateToCurrent(parsed) ?? freshSave();
   } catch {
     return freshSave();
   }
@@ -149,8 +60,8 @@ function writeNow(data: SaveData): void {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch {
-    // Storage full or unavailable. The game keeps working in memory;
-    // the parent area's export button is the backup route.
+    // Storage full or unavailable. The game keeps working in memory; the
+    // grown-ups' export button is the backup route.
   }
 }
 
@@ -183,21 +94,20 @@ export function flushSave(): void {
 export function clearSave(): void {
   try {
     localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(SAVE_KEY_V1);
   } catch {
     /* nothing useful to do */
   }
 }
 
-/** Serialise the save for the parent-area export button. */
+/** Serialise the save for the grown-ups' export button. */
 export function exportSave(data: SaveData): string {
   return JSON.stringify(data, null, 2);
 }
 
-export type ImportResult =
-  | { ok: true; data: SaveData }
-  | { ok: false; error: string };
+export type ImportResult = { ok: true; data: SaveData } | { ok: false; error: string };
 
-/** Parse a pasted save file. Never throws. */
+/** Parse a pasted save file. Never throws. Accepts v1 and v2 alike. */
 export function importSave(text: string): ImportResult {
   let parsed: unknown;
   try {
@@ -205,12 +115,14 @@ export function importSave(text: string): ImportResult {
   } catch {
     return { ok: false, error: "That doesn't look like a save file." };
   }
-  if (typeof parsed !== 'object' || parsed === null) {
-    return { ok: false, error: "That doesn't look like a save file." };
-  }
-  const data = migrate(parsed as Record<string, unknown>);
+  const data = migrateToCurrent(parsed);
   if (data === null) {
     return { ok: false, error: 'That save file could not be read.' };
   }
   return { ok: true, data };
+}
+
+/** A fresh game with every counter cleared. Used by the grown-ups' reset. */
+export function brandNewSave(): SaveData {
+  return { ...freshSave(), coinErrors: emptyCoinErrors(), schemaVersion: CURRENT_SCHEMA_VERSION };
 }

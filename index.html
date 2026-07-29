@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!--
+      PRIVACY LOCK.
+      This app makes ZERO network requests at runtime. `connect-src 'none'`
+      kills fetch/XHR/WebSocket/EventSource/beacon outright, so no analytics,
+      telemetry or error reporting can ever be added by accident. Fonts, images
+      and scripts are same-origin only; `img-src data:` exists purely so coins
+      and shopfronts can be drawn in code as inline SVG/canvas data URIs.
+      Do not relax this.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+
+    <!--
+      iPad viewport. `maximum-scale=1, user-scalable=no` stops pinch-zoom and
+      double-tap zoom during play; `viewport-fit=cover` lets the layout run
+      under the rounded corners and home indicator, which we then pad back with
+      env(safe-area-inset-*) in index.css.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+
+    <title>High Street</title>
+    <meta name="description" content="A quiet British high street where you learn about money." />
+    <meta name="theme-color" content="#f4ead8" />
+    <meta name="color-scheme" content="light" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- iOS home-screen / standalone behaviour. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="High Street" />
+
+    <!-- Icons. All local; nothing is fetched from a CDN. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/favicon.svg" color="#d4af37" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

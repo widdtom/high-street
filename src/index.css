@@ -1,0 +1,243 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+ * HIGH STREET — global surface styles
+ *
+ * The game is a FIXED, FULL-VIEWPORT, LANDSCAPE surface on an iPad home-screen
+ * PWA. Nothing scrolls, nothing bounces, nothing selects, nothing zooms.
+ * Screens compose inside #root; they should never fight the rules below.
+ *
+ * No @font-face anywhere: the type stack is the system stack from
+ * tailwind.config.js, so not a single byte of font is fetched over the network.
+ * ============================================================================= */
+
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /* Safe-area insets exposed as variables so screens can use them in
+       arbitrary calc() expressions, not just the utility classes below. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+
+    /* Minimum breathing room even where there is no physical inset. */
+    --safe-gutter: 0.75rem;
+  }
+
+  html {
+    height: 100%;
+    /* Stop iOS bumping type size when the iPad is rotated. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* Fixed body = no rubber-band overscroll, no address-bar jitter, no page
+     scrolling. 100dvh tracks the dynamic viewport; the 100vh line before it is
+     the fallback for engines without dvh. */
+  body {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background-color: #f4ead8;
+    color: #3c2f1c;
+    /* Kill the 300ms double-tap-to-zoom delay globally. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    /* A six-year-old drags coins around. Long-pressing one must never raise
+       the iOS text-selection handles or the copy/share callout menu. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* Every interactive element, without exception. `manipulation` disables
+     double-tap zoom on the element while leaving pan and pinch alone. */
+  button,
+  [role='button'],
+  a,
+  label,
+  summary,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  [role='button'] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    cursor: pointer;
+    /* iOS Safari refuses to honour background/border on buttons otherwise. */
+    -webkit-appearance: none;
+    appearance: none;
+    background: none;
+    border: 0;
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Draggable game pieces: never let a drag turn into a browser gesture. */
+  [draggable='true'],
+  [data-draggable] {
+    touch-action: none;
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+
+  img,
+  svg {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * UTILITIES — deliberately OUTSIDE @layer components.
+ *
+ * Tailwind tree-shakes anything declared inside @layer that it cannot find in
+ * the `content` globs. These classes are written for screens that other agents
+ * are still authoring, so they must survive even while unused. Plain CSS after
+ * the @tailwind directives is always emitted, and it also wins on cascade
+ * order against equally-specific utilities, which is what we want for insets.
+ * -------------------------------------------------------------------------- */
+
+/* Horizontal safe-area padding (rounded corners in landscape). */
+.safe-px {
+  padding-left: max(var(--safe-left), var(--safe-gutter));
+  padding-right: max(var(--safe-right), var(--safe-gutter));
+}
+
+/* Vertical safe-area padding (status bar / home indicator). */
+.safe-py {
+  padding-top: max(var(--safe-top), var(--safe-gutter));
+  padding-bottom: max(var(--safe-bottom), var(--safe-gutter));
+}
+
+/* All four at once. */
+.safe-p {
+  padding-top: max(var(--safe-top), var(--safe-gutter));
+  padding-right: max(var(--safe-right), var(--safe-gutter));
+  padding-bottom: max(var(--safe-bottom), var(--safe-gutter));
+  padding-left: max(var(--safe-left), var(--safe-gutter));
+}
+
+/* Insets with no minimum gutter, for edge-to-edge artwork. */
+.safe-inset {
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+}
+
+.safe-mb {
+  margin-bottom: max(var(--safe-bottom), var(--safe-gutter));
+}
+
+.safe-mt {
+  margin-top: max(var(--safe-top), var(--safe-gutter));
+}
+
+/* The full-bleed play area a screen roots itself in. */
+.game-surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Opt out of text selection anywhere. */
+.no-select {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Opt back IN, for the rare place real text needs selecting. */
+.select-text-ok {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* -----------------------------------------------------------------------------
+ * ROTATE OVERLAY
+ *
+ * Landscape-only game. The overlay is driven ENTIRELY by CSS media queries —
+ * no user-agent sniffing, no JS orientation listener — so it is impossible for
+ * it to appear on a desktop browser during development. It shows only when the
+ * device both lacks a hover-capable pointer and is held in portrait.
+ * -------------------------------------------------------------------------- */
+
+.rotate-overlay {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) and (orientation: portrait) {
+  .rotate-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f4ead8;
+    /* Swallow every touch so the game underneath cannot be played sideways. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+/* The iPad glyph tips back and forth so a pre-reader understands the ask
+   without any text at all. */
+@keyframes rotate-hint {
+  0%,
+  18% {
+    transform: rotate(0deg);
+  }
+  45%,
+  72% {
+    transform: rotate(-90deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.rotate-overlay__glyph {
+  transform-origin: 50% 50%;
+  animation: rotate-hint 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotate-overlay__glyph {
+    animation: none;
+    transform: rotate(-90deg);
+  }
+}

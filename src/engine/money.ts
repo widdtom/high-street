@@ -72,9 +72,16 @@ export function totalOf(coins: CoinValue[]): Pence {
 }
 
 /**
- * Coin-reachability DP: can `target` be made exactly from unlimited copies of
- * `coins`? Exported because it is the honest unit under test — it lets tests
- * probe denomination sets that no real stage uses, e.g. {1,5} cannot make 3.
+ * Can `target` be made exactly from `coins`, using each coin in the list AT
+ * MOST ONCE?
+ *
+ * `coins` is a finite multiset — a purse, the actual coins she is holding —
+ * not a denomination set with unlimited supply. That distinction is the whole
+ * point of this function: a purse of [1, 20] cannot make 2p, even though the
+ * denominations {1, 20} could if pennies were unlimited.
+ *
+ * This replaces the old `canMakeExactly(target, stage)`, which could only ever
+ * return true because 1p is available at every stage.
  *
  * target 0 => true (pay with nothing). Negative target => false.
  */
@@ -87,29 +94,16 @@ export function canMakeExactlyFrom(target: Pence, coins: readonly CoinValue[]): 
   if (target === 0) return true;
   if (coins.length === 0) return false;
 
+  // 0/1 subset-sum over the multiset: walk each amount downward so a coin is
+  // never spent twice.
   const reachable = new Array<boolean>(target + 1).fill(false);
   reachable[0] = true;
-  for (let amount = 1; amount <= target; amount++) {
-    for (const c of coins) {
-      if (c <= amount && reachable[amount - c] === true) {
-        reachable[amount] = true;
-        break;
-      }
+  for (const c of coins) {
+    for (let amount = target; amount >= c; amount -= 1) {
+      if (reachable[amount - c] === true) reachable[amount] = true;
     }
   }
   return reachable[target] === true;
-}
-
-/**
- * Can `target` be paid exactly with the coins unlocked at `stage`?
- * Always true for any non-negative target at a real UK stage, because 1p is
- * always in play — but the DP is real, not a shortcut, so it stays honest if
- * the stage table ever changes.
- */
-export function canMakeExactly(target: Pence, stage: Stage): boolean {
-  assertPence(target, 'target');
-  assertStage(stage);
-  return canMakeExactlyFrom(target, coinsForStage(stage));
 }
 
 /**

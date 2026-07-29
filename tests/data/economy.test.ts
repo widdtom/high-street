@@ -9,7 +9,7 @@ import {
   SHIFT_BONUS_PER_CUSTOMER,
   TOYSHOP_ITEMS,
 } from '../../src/data/economy';
-import { canMakeExactly, minimumCoins, totalOf } from '../../src/engine';
+import { canMakeExactlyFrom, minimumCoins, totalOf } from '../../src/engine';
 
 const ALL_AMOUNTS = [
   POCKET_MONEY,
@@ -31,9 +31,10 @@ describe('economy data', () => {
     // Prices are all <= 12p precisely so she can pay exactly with 1p/2p/5p/10p.
     for (const item of BAKERY_ITEMS) {
       expect(item.price).toBeLessThanOrEqual(12);
-      expect(canMakeExactly(item.price, 1)).toBe(true);
       const coins = minimumCoins(item.price, 1);
       expect(totalOf(coins)).toBe(item.price);
+      // Holding exactly that handful of coins, she can pay to the penny.
+      expect(canMakeExactlyFrom(item.price, coins)).toBe(true);
     }
   });
 

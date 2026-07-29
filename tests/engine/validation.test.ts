@@ -10,7 +10,7 @@ import { coinsForStage } from '../../src/engine/coins';
 import {
   allCombinations,
   assertPence,
-  canMakeExactly,
+
   canMakeExactlyFrom,
   formatMoney,
   minimumCoins,
@@ -63,7 +63,6 @@ describe('every Pence-taking export rejects non-integers', () => {
   for (const bad of BAD_PENCE) {
     it(`rejects ${String(bad)}`, () => {
       expect(() => formatMoney(bad, 1)).toThrow(TypeError);
-      expect(() => canMakeExactly(bad, 1)).toThrow(TypeError);
       expect(() => canMakeExactlyFrom(bad, [1, 2])).toThrow(TypeError);
       expect(() => minimumCoins(bad, 1)).toThrow(TypeError);
       expect(() => allCombinations(bad, 1, 10)).toThrow(TypeError);
@@ -79,7 +78,6 @@ describe('every Stage-taking export rejects invalid stages', () => {
   for (const bad of BAD_STAGES) {
     it(`rejects stage ${String(bad)}`, () => {
       expect(() => formatMoney(10, bad)).toThrow(TypeError);
-      expect(() => canMakeExactly(10, bad)).toThrow(TypeError);
       expect(() => minimumCoins(10, bad)).toThrow(TypeError);
       expect(() => allCombinations(10, bad, 5)).toThrow(TypeError);
       expect(() => changeByCountingOn(10, 50, bad)).toThrow(TypeError);
@@ -178,7 +176,6 @@ describe('barrel exports everything', () => {
       'assertCoinValue',
       'formatMoney',
       'totalOf',
-      'canMakeExactly',
       'canMakeExactlyFrom',
       'minimumCoins',
       'allCombinations',

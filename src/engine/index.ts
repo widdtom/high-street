@@ -32,7 +32,6 @@ export {
 export {
   allCombinations,
   assertPence,
-  canMakeExactly,
   canMakeExactlyFrom,
   formatMoney,
   minimumCoins,

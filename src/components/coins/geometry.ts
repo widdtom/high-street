@@ -254,18 +254,38 @@ export function circlePath(cx: number, cy: number, r: number): string {
  * Coin-level geometry
  * ------------------------------------------------------------------------- */
 
-/** Radius of the circumscribed circle for a coin drawn at `width` px across. */
+/**
+ * Radius of the circumscribed circle for a coin whose MAXIMUM DIAMETER is
+ * `width` px.
+ *
+ * Quoted UK coin diameters are maximum diameters, so `width` is always the
+ * greatest distance between two points on the outline — never the
+ * across-the-flats measurement. Getting this wrong for the £1 inflated its
+ * true maximum diameter to ~24.2mm and pushed it past the 10p at 24.5mm,
+ * inverting the real size order. A £1 is fractionally SMALLER than a 10p, and
+ * preserving that ordering is the whole point of using accurate diameters.
+ */
 export function shapeCircumradius(shape: CoinShape, width: number): number {
   switch (shape) {
     case 'circle':
       return width / 2;
     case 'heptagon':
+      // A constant-width body's maximum diameter equals its width.
       return heptagonCircumradiusForWidth(width);
     case 'dodecagon':
-      // Oriented flat-side-up, a dodecagon's bounding box equals its
-      // across-the-flats measurement in both axes.
-      return width / (2 * Math.cos(Math.PI / DODECAGON_SIDES));
+      // 12 sides is even, so the shape is centrally symmetric and its maximum
+      // diameter is vertex-to-opposite-vertex, i.e. twice the circumradius.
+      return width / 2;
   }
+}
+
+/**
+ * The greatest distance between any two points on a coin's rendered outline,
+ * in base px. By construction this is exactly the quoted diameter, and the
+ * ordering across the eight coins is asserted in tests.
+ */
+export function renderedMaxDiameterPx(value: CoinValue, scale = 1): number {
+  return coinDiameterPx(value, scale);
 }
 
 /**

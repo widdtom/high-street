@@ -1,5 +1,5 @@
 /* =============================================================================
- * formatMoney / totalOf / canMakeExactly* / allCombinations
+ * formatMoney / totalOf / canMakeExactlyFrom / allCombinations
  * ============================================================================= */
 
 import { describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import type { CoinValue, Stage } from '../../src/engine/types';
 import { coinsForStage } from '../../src/engine/coins';
 import {
   allCombinations,
-  canMakeExactly,
+
   canMakeExactlyFrom,
   formatMoney,
   totalOf,
@@ -90,54 +90,65 @@ describe('totalOf', () => {
   });
 });
 
-describe('canMakeExactlyFrom', () => {
-  it('the {1,5} probe: 3 and 6 are BOTH reachable', () => {
-    // NOTE: the brief asked for canMakeExactlyFrom(3, [1,5]) === false, but that
-    // is arithmetically impossible: 3 = 1+1+1. Once a 1p is in the set every
-    // non-negative amount is reachable. The unreachable case needs 1p removed.
-    expect(canMakeExactlyFrom(3, [1, 5])).toBe(true);
-    expect(canMakeExactlyFrom(6, [1, 5])).toBe(true);
-    // Drop the 1p and 3 genuinely becomes unreachable, which is the property
-    // the brief was reaching for.
-    expect(canMakeExactlyFrom(3, [5])).toBe(false);
-    expect(canMakeExactlyFrom(3, [5, 10, 20])).toBe(false);
+describe('canMakeExactlyFrom — a purse, not an unlimited supply', () => {
+  // `coins` is a finite multiset: each coin may be used at most once. This is
+  // what the shop UI asks about ("can she pay this exactly with what she is
+  // holding?"), and it is why the old canMakeExactly(target, stage) was
+  // useless — with unlimited pennies the answer was always yes.
+
+  it('uses each coin at most once', () => {
+    expect(canMakeExactlyFrom(4, [2])).toBe(false); // one 2p cannot make 4p
+    expect(canMakeExactlyFrom(4, [2, 2])).toBe(true);
+    expect(canMakeExactlyFrom(3, [1, 5])).toBe(false); // only one 1p
+    expect(canMakeExactlyFrom(3, [1, 1, 1])).toBe(true);
   });
 
-  it('returns false when no combination lands exactly', () => {
+  it('the case the game is built around: enough money, wrong coins', () => {
+    // 20p in the purse, a 15p bag of potatoes. She can afford it and cannot
+    // pay it exactly — so she overpays and gets change. That is the lesson.
+    expect(totalOf([20])).toBeGreaterThan(15);
+    expect(canMakeExactlyFrom(15, [20])).toBe(false);
+    // Add a 5p and it becomes payable exactly.
+    expect(canMakeExactlyFrom(15, [20, 5])).toBe(false);
+    expect(canMakeExactlyFrom(15, [10, 5])).toBe(true);
+  });
+
+  it('returns false when no subset lands exactly', () => {
     expect(canMakeExactlyFrom(3, [2])).toBe(false);
     expect(canMakeExactlyFrom(3, [2, 10])).toBe(false);
     expect(canMakeExactlyFrom(7, [2, 10, 20])).toBe(false);
     expect(canMakeExactlyFrom(1, [5, 10])).toBe(false);
     expect(canMakeExactlyFrom(30, [])).toBe(false);
+    expect(canMakeExactlyFrom(3, [5])).toBe(false);
+    expect(canMakeExactlyFrom(3, [5, 10, 20])).toBe(false);
   });
 
-  it('returns true when a combination exists', () => {
-    expect(canMakeExactlyFrom(4, [2])).toBe(true);
+  it('returns true when a subset exists', () => {
     expect(canMakeExactlyFrom(12, [2, 10])).toBe(true);
     expect(canMakeExactlyFrom(30, [20, 10])).toBe(true);
+    expect(canMakeExactlyFrom(6, [1, 5])).toBe(true);
     expect(canMakeExactlyFrom(0, [])).toBe(true);
+  });
+
+  it('agrees with brute force over every subset of a small purse', () => {
+    const purse: CoinValue[] = [1, 2, 2, 5, 10, 20];
+    const sums = new Set<number>();
+    for (let mask = 0; mask < 1 << purse.length; mask += 1) {
+      let s = 0;
+      for (let i = 0; i < purse.length; i += 1) {
+        if (mask & (1 << i)) s += purse[i] as number;
+      }
+      sums.add(s);
+    }
+    for (let target = 0; target <= 45; target += 1) {
+      expect(canMakeExactlyFrom(target, purse)).toBe(sums.has(target));
+    }
   });
 
   it('0 is always reachable, negatives never are', () => {
     expect(canMakeExactlyFrom(0, [1, 2, 5])).toBe(true);
     expect(canMakeExactlyFrom(-1, [1, 2, 5])).toBe(false);
     expect(canMakeExactlyFrom(-100, [1])).toBe(false);
-  });
-});
-
-describe('canMakeExactly (real stages)', () => {
-  it('every amount 0..300 is payable at every stage, because 1p always exists', () => {
-    for (const stage of STAGES) {
-      for (let v = 0; v <= 300; v++) {
-        expect(canMakeExactly(v, stage)).toBe(true);
-      }
-    }
-  });
-
-  it('rejects negatives', () => {
-    for (const stage of STAGES) {
-      expect(canMakeExactly(-1, stage)).toBe(false);
-    }
   });
 });
 

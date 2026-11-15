@@ -1,3 +1,4 @@
+import { hasWorkedThisWeek } from '../engine/shift';
 import type { Screen } from '../state/gameReducer';
 import { useGame } from '../state/GameContext';
 
@@ -104,11 +105,44 @@ function Shopfront({ shop, onEnter }: { shop: Shop; onEnter: () => void }) {
 }
 
 /**
+ * The "Help wanted" card in the bakery window. A sibling of the shopfront
+ * button, stacked on top of it — nested buttons are not legal HTML. Once this
+ * week's shift is done it turns over to say so, and stays tappable: the bakery
+ * thanks her and says come back next week.
+ */
+function HelpWanted({ worked, onTap }: { worked: boolean; onTap: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      aria-label={worked ? 'Help wanted: done this week' : 'Help wanted'}
+      data-testid="help-wanted"
+      data-worked={worked}
+      className={[
+        'tappable absolute left-1/2 top-[4.2rem] z-10 flex -translate-x-1/2 -rotate-3 flex-col items-center rounded-xl border-4 px-3 py-1 shadow-lg transition active:scale-95 sm:top-[4.7rem]',
+        worked ? 'border-stone-300 bg-stone-100 text-stone-500' : 'border-amber-800/40 bg-amber-50 text-amber-900',
+      ].join(' ')}
+    >
+      {/* An apron, so the sign reads without words. */}
+      <svg viewBox="0 0 32 32" className="h-8 w-8" role="presentation">
+        <path d="M11 3 Q16 7 21 3" stroke={worked ? '#a8a29e' : '#e07a5f'} strokeWidth="2.5" fill="none" />
+        <path d="M10 6 H22 V12 L27 12 L25 29 H7 L5 12 L10 12 Z" fill={worked ? '#d6d3d1' : '#e07a5f'} />
+        <rect x="11" y="17" width="10" height="6" rx="1.5" fill="#ffffff" opacity="0.6" />
+      </svg>
+      <span className="whitespace-nowrap text-base font-black leading-tight">
+        {worked ? 'See you next week' : 'Help wanted!'}
+      </span>
+    </button>
+  );
+}
+
+/**
  * The high street. All four shops are open. No text instructions — the shops
  * are visually obvious, and the awning colour is the only thing that names them.
  */
 export default function StreetScreen() {
-  const { dispatch } = useGame();
+  const { state, dispatch } = useGame();
+  const worked = hasWorkedThisWeek(state.save.shiftWeek, state.save.week);
 
   return (
     <div className="flex h-full flex-col">
@@ -125,11 +159,15 @@ export default function StreetScreen() {
 
         <div className="flex h-[80%] min-h-0 items-end gap-3 sm:gap-4">
           {SHOPS.map((shop) => (
-            <Shopfront
-              key={shop.id}
-              shop={shop}
-              onEnter={() => dispatch({ type: 'go', screen: shop.id as Screen })}
-            />
+            <div key={shop.id} className="relative flex h-full flex-1">
+              <Shopfront
+                shop={shop}
+                onEnter={() => dispatch({ type: 'go', screen: shop.id as Screen })}
+              />
+              {shop.id === 'bakery' && (
+                <HelpWanted worked={worked} onTap={() => dispatch({ type: 'go', screen: 'shift' })} />
+              )}
+            </div>
           ))}
         </div>
       </div>

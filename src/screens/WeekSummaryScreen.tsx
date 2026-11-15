@@ -15,7 +15,7 @@ import { FOOD_METER_MAX } from '../data/economy';
 import { formatMoney } from '../engine';
 import type { Pence, Stage } from '../engine/types';
 import { summariseWeek, wentHungry } from '../engine/week';
-import { weekStartTotal } from '../state/gameReducer';
+import { earnedThisWeek, weekStartTotal } from '../state/gameReducer';
 import { useGame } from '../state/GameContext';
 
 function Face({ size = 72 }: { size?: number }) {
@@ -79,7 +79,7 @@ export default function WeekSummaryScreen() {
   const stage: Stage = save.stage;
 
   const startTotal: Pence = weekStartTotal(save);
-  const summary = summariseWeek(startTotal, save);
+  const summary = summariseWeek(startTotal, save, earnedThisWeek(save));
   const hungry = wentHungry(summary.foodEaten);
 
   const goal = save.savingGoal;
@@ -103,6 +103,9 @@ export default function WeekSummaryScreen() {
 
         <div className="flex flex-col">
           <Row label="Money at the start" value={formatMoney(summary.startedWith, stage)} />
+          {summary.earned > 0 && (
+            <Row label="Money earned at the bakery" value={formatMoney(summary.earned, stage)} />
+          )}
           <Row label="Money spent" value={formatMoney(summary.spent, stage)} />
           <Row label="Money left" value={formatMoney(summary.leftWith, stage)} />
           <Row label="Food eaten" value={`${summary.foodEaten} of ${FOOD_METER_MAX}`}>

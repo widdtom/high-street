@@ -26,10 +26,11 @@ const RICH: SaveData = {
     { price: 50, attempts: 3, ts: 1700000001000, stage: 3 },
   ],
   coinErrors: { ...emptyCoinErrors(), 5: 3, 20: 1 },
+  shiftWeek: 6,
 };
 
 describe('save export/import', () => {
-  it('round-trips a full v2 save exactly', () => {
+  it('round-trips a full current save exactly', () => {
     const result = importSave(exportSave(RICH));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -76,7 +77,8 @@ describe('save export/import', () => {
     const result = importSave(JSON.stringify(v1));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.data.schemaVersion).toBe(2);
+    expect(result.data.schemaVersion).toBe(3);
+    expect(result.data.shiftWeek).toBeNull();
     expect(result.data.purse).toEqual([10, 10, 5]);
     expect(result.data.stage).toBe(2);
     expect(result.data.week).toBe(1);
@@ -97,9 +99,10 @@ describe('save export/import', () => {
     expect(s.savingGoal).toBeNull();
     expect(s.transactionLog).toEqual([]);
     expect(s.coinErrors).toEqual(emptyCoinErrors());
-    // 30p pocket money + the 25p TEMP_SHIFT_STANDIN, already in her purse so
-    // that a reload during the Saturday ceremony cannot pay her twice.
-    expect(s.purse.reduce((a, b) => a + b, 0)).toBe(55);
+    expect(s.shiftWeek).toBeNull();
+    // 30p pocket money, already in her purse so that a reload during the
+    // Saturday ceremony cannot pay her twice.
+    expect(s.purse.reduce((a, b) => a + b, 0)).toBe(30);
   });
 
   it('holds coins, not balances', () => {

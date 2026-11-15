@@ -3,8 +3,11 @@
 A quiet British high street, built for one six-year-old to learn what money is.
 
 Pocket money arrives. The bakery wants 12p for a loaf. You count out a 10p and a
-2p, you hand them over, and the loaf is yours. That is the whole game. There are
-no points, no timers, no stars, no adverts, and nobody to beat.
+2p, you hand them over, and the loaf is yours. Once a week she can
+also work a shift behind the bakery counter: customers ask for things, she
+makes the order, takes their money and counts out the change, and goes home
+with her wages and a tip jar. There are no points, no timers, no stars, no
+adverts, and nobody to beat.
 
 It runs as an installed app on an iPad home screen, in landscape, offline.
 

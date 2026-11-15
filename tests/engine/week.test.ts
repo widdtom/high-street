@@ -202,10 +202,20 @@ describe('summariseWeek', () => {
       week: 3,
       startedWith: 80,
       spent: 45,
+      earned: 0,
       leftWith: 35,
       foodEaten: 3,
       lightsStayedOn: true,
     });
+  });
+
+  it('counts bakery wages as earned, not as money she started with', () => {
+    // Started with 30p, earned 25p, has 40p left: she spent 15p.
+    const save = saveWith({ purse: [20, 10, 10] });
+    const summary = summariseWeek(30, save, 25);
+    expect(summary.startedWith).toBe(30);
+    expect(summary.earned).toBe(25);
+    expect(summary.spent).toBe(15);
   });
 
   it('counts the money box as money she still has', () => {

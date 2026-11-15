@@ -8,8 +8,13 @@
 import type { CoinValue, Pence, Stage } from '../engine/types';
 
 export const SAVE_KEY_V1 = 'highstreet.save.v1';
+/**
+ * The storage key stays at `.v2` for v3 saves on purpose: v2 -> v3 only adds a
+ * field, and migrateToCurrent() upgrades whatever schemaVersion it finds under
+ * this key. Renaming the key would strand every existing v2 save.
+ */
 export const SAVE_KEY = 'highstreet.save.v2';
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /** Food meter position. Three segments; one food purchase fills one. */
 export type FoodMeter = 0 | 1 | 2 | 3;
@@ -58,6 +63,12 @@ export interface SaveData {
   savingGoal: string | null;
   transactionLog: TransactionRecord[];
   coinErrors: CoinErrorMap;
+  /**
+   * The week she last finished a bakery shift, or null if she never has. One
+   * shift a week: the wages are paid in the same reducer step that sets this,
+   * so a reload can never pay her twice.
+   */
+  shiftWeek: number | null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -79,17 +90,14 @@ export function emptyCoinErrors(): CoinErrorMap {
 }
 
 /**
- * A brand new game. Week 1's income is already in her purse as real coins,
- * spread across denominations so the first shop visit has something to think
- * about.
- *
- * 55p = 30p pocket money + the 25p TEMP_SHIFT_STANDIN.
- * TODO: DELETE IN PROMPT 3 — this drops back to 30p when the shift lands.
+ * A brand new game. Week 1's pocket money (30p) is already in her purse as
+ * real coins, spread across denominations so the first shop visit has
+ * something to think about. Anything more she earns at the bakery.
  */
 export function freshSave(): SaveData {
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
-    purse: [10, 10, 10, 10, 5, 5, 2, 2, 1],
+    purse: [10, 10, 5, 2, 2, 1],
     moneyBox: [],
     stage: 1,
     week: 1,
@@ -100,5 +108,6 @@ export function freshSave(): SaveData {
     savingGoal: null,
     transactionLog: [],
     coinErrors: emptyCoinErrors(),
+    shiftWeek: null,
   };
 }

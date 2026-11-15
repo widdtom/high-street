@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ELECTRICITY_ITEM_ID,
   allMoneyTotal,
+  currentCustomer,
+  earnedThisWeek,
+  freshShift,
+  shiftFinished,
   gameReducer,
   initialState,
   moneyBoxTotal,
@@ -13,6 +17,8 @@ import {
 } from '../../src/state/gameReducer';
 import { freshSave, type SaveData } from '../../src/state/saveTypes';
 import type { CoinValue, Stage } from '../../src/engine/types';
+import { minimumCoins } from '../../src/engine';
+import { SHIFT_CUSTOMERS } from '../../src/data/economy';
 
 function stateWith(patch: Partial<SaveData>): GameState {
   const base = initialState({ ...freshSave(), ...patch });
@@ -254,7 +260,7 @@ describe('the week', () => {
     expect(s.save.foodMeter).toBe(0);
     expect(s.save.electricityDays).toBe(0);
     // Nothing she owns is taken away, and the new week's income is added.
-    expect(purseTotal(s.save)).toBe(10 + 55);
+    expect(purseTotal(s.save)).toBe(10 + 30);
     expect(s.save.purse.slice(0, 1)).toEqual([10]);
     expect(s.save.bedroom).toEqual(['stickers']);
     expect(s.screen).toBe('saturday');
@@ -268,18 +274,18 @@ describe('the week', () => {
     s = gameReducer(s, { type: 'goToBed' });
     s = gameReducer(s, { type: 'confirmBed' });
     expect(s.save.week).toBe(2);
-    expect(purseTotal(s.save)).toBe(55); // 30p pocket money + the 25p stand-in
+    expect(purseTotal(s.save)).toBe(30); // 30p pocket money
 
     // Replaying the ceremony grants nothing.
     s = gameReducer(s, { type: 'saturdayNext' });
     s = gameReducer(s, { type: 'saturdayNext' });
     s = gameReducer(s, { type: 'saturdayNext' });
-    expect(purseTotal(s.save)).toBe(55);
+    expect(purseTotal(s.save)).toBe(30);
   });
 
   it('a fresh save already holds week 1\'s income, so a reload cannot re-grant it', () => {
     const a = initialState(freshSave());
-    expect(purseTotal(a.save)).toBe(55);
+    expect(purseTotal(a.save)).toBe(30);
     expect(a.screen).toBe('saturday');
     // Once anything has happened, the game no longer opens on Saturday.
     const b = initialState({ ...freshSave(), bag: [{ itemId: 'loaf', boughtWeek: 1 }] });
@@ -370,5 +376,114 @@ describe('navigation', () => {
     s = buy(s, 'roll', 5, true);
     for (const coin of s.save.purse) expect(Number.isInteger(coin)).toBe(true);
     for (const coin of s.save.moneyBox) expect(Number.isInteger(coin)).toBe(true);
+  });
+});
+
+describe('the bakery shift', () => {
+  const atWork = (patch: Partial<SaveData> = {}): GameState =>
+    gameReducer(stateWith(patch), { type: 'go', screen: 'shift' });
+
+  /** Make the order, then give the right change, for the current customer. */
+  function serveRight(s: GameState): GameState {
+    const c = currentCustomer(s);
+    if (c === null) throw new Error('no customer');
+    for (const id of c.itemIds) s = gameReducer(s, { type: 'trayAdd', itemId: id });
+    if (c.toppings !== null) {
+      for (let i = 0; i < c.toppings.count; i++) {
+        s = gameReducer(s, { type: 'toppingAdd', topping: c.toppings.kind });
+      }
+    }
+    s = gameReducer(s, { type: 'serve' });
+    expect(s.shift.phase).toBe('change');
+    for (const coin of minimumCoins(c.changeDue, s.save.stage)) {
+      s = gameReducer(s, { type: 'tillAdd', coin });
+    }
+    s = gameReducer(s, { type: 'giveChange' });
+    expect(s.shift.phase).toBe('thanks');
+    return gameReducer(s, { type: 'nextCustomer' });
+  }
+
+  it('starts at the front of the queue, making the first order', () => {
+    const s = atWork();
+    expect(s.screen).toBe('shift');
+    expect(s.shift).toEqual(freshShift);
+    expect(currentCustomer(s)).not.toBeNull();
+  });
+
+  it('a wrong order moves nothing and costs nothing', () => {
+    let s = atWork({ purse: [10] });
+    s = gameReducer(s, { type: 'trayAdd', itemId: 'no_such_thing' });
+    s = gameReducer(s, { type: 'serve' });
+    expect(s.shift.phase).toBe('make');
+    expect(s.shift.orderReply?.kind).not.toBe('right');
+    expect(s.shift.tray).toEqual(['no_such_thing']);
+    expect(s.save.purse).toEqual([10]);
+  });
+
+  it('cannot ring the bell with an empty tray', () => {
+    const s = atWork();
+    expect(gameReducer(s, { type: 'serve' })).toBe(s);
+  });
+
+  it('toppings need a bun, and go when the bun goes', () => {
+    let s = atWork();
+    expect(gameReducer(s, { type: 'toppingAdd', topping: 'cherry' }).shift.toppings.cherry).toBe(0);
+    s = gameReducer(s, { type: 'trayAdd', itemId: 'iced_bun' });
+    s = gameReducer(s, { type: 'toppingAdd', topping: 'cherry' });
+    s = gameReducer(s, { type: 'toppingAdd', topping: 'cherry' });
+    s = gameReducer(s, { type: 'toppingRemove', topping: 'cherry' });
+    expect(s.shift.toppings.cherry).toBe(1);
+    s = gameReducer(s, { type: 'trayRemove', position: 0 });
+    expect(s.shift.toppings).toEqual({ cherry: 0, button: 0 });
+  });
+
+  it('wrong change keeps the coins on the counter and costs nothing', () => {
+    let s = atWork({ purse: [5] });
+    const c = currentCustomer(s);
+    if (c === null) throw new Error('no customer');
+    for (const id of c.itemIds) s = gameReducer(s, { type: 'trayAdd', itemId: id });
+    if (c.toppings !== null) {
+      for (let i = 0; i < c.toppings.count; i++) s = gameReducer(s, { type: 'toppingAdd', topping: c.toppings.kind });
+    }
+    s = gameReducer(s, { type: 'serve' });
+    s = gameReducer(s, { type: 'tillAdd', coin: 10 });
+    s = gameReducer(s, { type: 'tillAdd', coin: 10 });
+    s = gameReducer(s, { type: 'giveChange' });
+    expect(s.shift.phase).toBe('change');
+    expect(s.shift.reply?.kind).toBe('over');
+    expect(s.shift.given).toEqual([10, 10]);
+    expect(s.save.purse).toEqual([5]);
+  });
+
+  it('pays wages plus the tip jar once, at the end, and only once a week', () => {
+    let s = atWork({ purse: [] });
+    for (let i = 0; i < SHIFT_CUSTOMERS; i++) {
+      expect(s.save.purse).toEqual([]); // nothing is paid mid-shift
+      s = serveRight(s);
+    }
+    expect(shiftFinished(s)).toBe(true);
+    s = gameReducer(s, { type: 'collectWages' });
+    expect(purseTotal(s.save)).toBe(25);
+    expect(s.save.shiftWeek).toBe(1);
+    expect(earnedThisWeek(s.save)).toBe(25);
+
+    // A double tap pays nothing more.
+    s = gameReducer(s, { type: 'collectWages' });
+    expect(purseTotal(s.save)).toBe(25);
+
+    // Walking back in this week: no more work to do.
+    s = gameReducer(gameReducer(s, { type: 'go', screen: 'street' }), { type: 'go', screen: 'shift' });
+    const before = s;
+    s = gameReducer(s, { type: 'trayAdd', itemId: 'roll' });
+    expect(s).toBe(before);
+
+    // Wages do not count as money she started the week with.
+    expect(weekStartTotal(s.save)).toBe(0);
+
+    // Next week, the bakery needs her again.
+    s = gameReducer(gameReducer(s, { type: 'goToBed' }), { type: 'confirmBed' });
+    expect(earnedThisWeek(s.save)).toBe(0);
+    s = gameReducer(s, { type: 'go', screen: 'shift' });
+    expect(gameReducer(s, { type: 'trayAdd', itemId: 'roll' }).shift.tray).toEqual(['roll']);
   });
 });

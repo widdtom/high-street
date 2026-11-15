@@ -24,16 +24,10 @@ export const ELECTRICITY_DAYS_PER_TOPUP = 7;
 export const FOOD_METER_MAX = 3;
 
 /**
- * TODO: DELETE IN PROMPT 3.
- *
- * Temporary income top-up. The bakery shift does not exist yet, so weekly
- * income is 30p against essentials of 23-40p — nothing left for toys, and
- * joyless to test. Paid alongside pocket money in the Saturday sequence.
- *
- * This must not survive into the finished game: earning has to be something
- * she chooses to do. See CLAUDE.md, "Temporary scaffolding".
+ * Customers served in one bakery shift. A full shift pays
+ * SHIFT_BASE_WAGE + SHIFT_BONUS_PER_CUSTOMER for each of them: 20p + 5p = 25p.
  */
-export const TEMP_SHIFT_STANDIN: Pence = 25;
+export const SHIFT_CUSTOMERS = 5;
 
 /**
  * Bakery stock. Every price is <= 12p so it can be paid exactly with the

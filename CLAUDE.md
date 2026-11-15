@@ -79,18 +79,23 @@ fractionally *smaller* than the 10p, and the size order
 `tests/coins/geometry.test.ts` from measured geometry. The size-versus-value mismatch is
 the single most important thing this game teaches.
 
-## Temporary scaffolding
+## The bakery shift
 
-### `TEMP_SHIFT_STANDIN` — DELETE IN PROMPT 3
+`src/engine/shift.ts` + `src/screens/ShiftScreen.tsx`. Reached from the "Help wanted"
+sign on the bakery. She works behind the counter, in the spirit of *Good Pizza, Great
+Pizza*: a regular from `CAST` asks for something (always shown as pictures), she puts
+it on the tray and counts toppings onto an iced bun, rings the bell, then counts change
+out of the till. Each customer drops 1p in the tip jar.
 
-`src/data/economy.ts` exports `TEMP_SHIFT_STANDIN: Pence = 25`, paid alongside pocket
-money in the Saturday sequence. It exists only because the bakery shift does not exist
-yet, leaving weekly income of 30p against essentials of 23–40p — nothing left for toys,
-and joyless to test.
-
-**It must not survive into the finished game.** Earning has to be something she chooses
-to do. When the bakery shift lands in prompt 3, delete the constant, its payment in the
-Saturday sequence, and this section.
+- **One shift a week.** `save.shiftWeek` records the week worked. Wages (20p) and tips
+  (5 × 1p) are paid in the same reducer step that sets it, so a reload can never pay twice.
+- **Customers are a pure function of (week, stage)** — no `Math.random()`.
+- **No timer, no patience meter, no rating.** A wrong order or wrong change gets one calm
+  line; nothing moves and nothing is recorded. After two wrong tries the customer says
+  "Count up from 9p to 10p."
+- **The till is not her money.** This is not a second payment implementation: her purse
+  is untouched until the wages land at the end.
+- Pocket money is 30p a week; anything more she earns here. `TEMP_SHIFT_STANDIN` is gone.
 
 ## Commands
 

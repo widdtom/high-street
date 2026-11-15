@@ -10,7 +10,7 @@ import {
   SHIFT_BASE_WAGE,
   SHIFT_BONUS_PER_CUSTOMER,
   STAGE_GATED_ITEMS,
-  TEMP_SHIFT_STANDIN,
+  SHIFT_CUSTOMERS,
   TOYSHOP_ITEMS,
   itemById,
 } from '../../src/data/economy';
@@ -99,10 +99,18 @@ describe('economy data', () => {
     expect(itemById('no_such_thing')).toBeUndefined();
   });
 
-  it('the temporary income stand-in is present and flagged', () => {
-    // Removed in prompt 3, when the bakery shift replaces it.
-    expect(TEMP_SHIFT_STANDIN).toBe(25);
-    expect(POCKET_MONEY + TEMP_SHIFT_STANDIN).toBe(55);
+  it('a full bakery shift pays 25p: 20p plus a penny for each of 5 customers', () => {
+    expect(SHIFT_CUSTOMERS).toBe(5);
+    let pay = SHIFT_BASE_WAGE;
+    for (let i = 0; i < SHIFT_CUSTOMERS; i++) pay += SHIFT_BONUS_PER_CUSTOMER;
+    expect(pay).toBe(25);
+  });
+
+  it('pocket money alone covers a week of the cheapest essentials', () => {
+    // Earning is a choice. Skipping the shift must never leave her hungry or in
+    // the dark if she buys carefully.
+    const cheapestFood = Math.min(...ALL_ITEMS.filter((i) => i.isFood).map((i) => i.price));
+    expect(cheapestFood * FOOD_METER_MAX + ELECTRICITY_WEEKLY).toBeLessThanOrEqual(POCKET_MONEY);
   });
 
   it('a week of essentials is affordable on a week of income', () => {
@@ -110,7 +118,7 @@ describe('economy data', () => {
       ...ALL_ITEMS.filter((i) => i.isFood).map((i) => i.price),
     );
     const essentials = cheapestFood * FOOD_METER_MAX + ELECTRICITY_WEEKLY;
-    expect(essentials).toBeLessThanOrEqual(POCKET_MONEY + TEMP_SHIFT_STANDIN);
+    expect(essentials).toBeLessThanOrEqual(POCKET_MONEY + SHIFT_BASE_WAGE + SHIFT_CUSTOMERS);
   });
 
   it('pocket money is enough for at least two bakery items', () => {

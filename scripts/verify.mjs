@@ -91,10 +91,10 @@ try {
 
   console.log('\nSaturday sequence');
   const beforeCoins = await save();
-  check('save is schema v2', beforeCoins?.schemaVersion === 2, `got ${beforeCoins?.schemaVersion}`);
+  check('save is schema v3', beforeCoins?.schemaVersion === 3, `got ${beforeCoins?.schemaVersion}`);
   check('week starts at 1', beforeCoins?.week === 1, `week ${beforeCoins?.week}`);
   const purseBefore = beforeCoins.purse.reduce((a, b) => a + b, 0);
-  check("week 1's income is already banked", purseBefore === 55, `${purseBefore}p`);
+  check("week 1's pocket money is already banked", purseBefore === 30, `${purseBefore}p`);
 
   await playSaturday();
   await page.screenshot({ path: `${SHOTS}/02-street.png` });
@@ -174,7 +174,7 @@ try {
   console.log('\nCorruption resilience');
   await page.evaluate(() => localStorage.setItem('highstreet.save.v2', '{{{ not json'));
   await page.reload({ waitUntil: 'networkidle' });
-  check('a corrupt save falls back to a fresh game', (await save())?.schemaVersion === 2);
+  check('a corrupt save falls back to a fresh game', (await save())?.schemaVersion === 3);
   // A fresh game opens on the Saturday ceremony, where the meter bar is hidden.
   check('the app still renders', await page.locator('[data-testid="collect-coins"]').isVisible());
   await playSaturday();
@@ -198,7 +198,7 @@ try {
   }, V1);
   await page.reload({ waitUntil: 'networkidle' });
   const migrated = await save();
-  check('a v1 save is found and upgraded', migrated?.schemaVersion === 2);
+  check('a v1 save is found and upgraded', migrated?.schemaVersion === 3);
   check('the purse survives coin for coin', JSON.stringify(migrated?.purse) === JSON.stringify(V1.purse), JSON.stringify(migrated?.purse));
   check('the stage survives', migrated?.stage === 2);
   check('coinErrors survive', migrated?.coinErrors['2'] === 1);
@@ -255,6 +255,98 @@ try {
     );
     await page.screenshot({ path: `${SHOTS}/2${SHOPS.indexOf(SHOPS.find((s) => s[0] === shop))}-${shop.replace(/\s+/g, '-')}.png` });
   }
+
+  console.log('\nThe bakery shift: five customers, wages and the tip jar');
+  await page.evaluate(() => {
+    const k = 'highstreet.save.v2';
+    const s = JSON.parse(localStorage.getItem(k));
+    s.purse = [10];
+    s.stage = 2;
+    s.shiftWeek = null;
+    localStorage.setItem(k, JSON.stringify(s));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  const sign = page.locator('[data-testid="help-wanted"]');
+  check('the bakery has a Help wanted sign', (await sign.getAttribute('data-worked')) === 'false');
+  await sign.click();
+  await page.waitForTimeout(900);
+  await page.screenshot({ path: `${SHOTS}/30-shift-order.png` });
+
+  /** Greedy coins for an amount, from the till's stage 2 coins. */
+  const coinsFor = (n) => {
+    const out = [];
+    for (const c of [20, 10, 5, 2, 1]) while (n >= c) { out.push(c); n -= c; }
+    return out;
+  };
+
+  let firstWrongDone = false;
+  for (let n = 0; n < 5; n += 1) {
+    const order = page.locator('[data-testid="order"]');
+    const items = (await order.getAttribute('data-items')).split(',');
+    const kind = await order.getAttribute('data-topping-kind');
+    const toppingCount = kind
+      ? Number(await page.locator('[data-testid="order-toppings"]').getAttribute('data-count'))
+      : 0;
+
+    if (!firstWrongDone) {
+      // A wrong order first: nothing moves, the customer just asks again.
+      await page.locator('[data-testid="shelf-item"][data-item-id="sausage_roll"]').click();
+      await page.locator('[data-testid="shelf-item"][data-item-id="sausage_roll"]').click();
+      await page.locator('[data-testid="shelf-item"][data-item-id="sausage_roll"]').click();
+      await page.locator('[data-testid="serve"]').click();
+      await page.waitForTimeout(150);
+      check('a wrong order keeps her making it', (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'make');
+      check('the customer is thinking, not cross', (await page.locator('[data-testid="customer-art"]').getAttribute('data-mood')) === 'thinking');
+      await page.screenshot({ path: `${SHOTS}/31-shift-wrong-order.png` });
+      for (let i = 0; i < 3; i += 1) await page.locator('[data-testid="tray-item"]').first().click();
+    }
+
+    for (const id of items) await page.locator(`[data-testid="shelf-item"][data-item-id="${id}"]`).click();
+    for (let i = 0; i < toppingCount; i += 1) {
+      await page.locator(`[data-testid="topping-button"][data-kind="${kind}"]`).click();
+    }
+    if (toppingCount > 0 && !firstWrongDone) await page.screenshot({ path: `${SHOTS}/32-shift-toppings.png` });
+    await page.locator('[data-testid="serve"]').click();
+    await page.waitForTimeout(150);
+    check(`customer ${n + 1}: the order is right`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'change');
+
+    const price = Number(await page.locator('[data-testid="order-price"]').getAttribute('data-price'));
+    const paid = Number(await page.locator('[data-testid="handed-over"]').getAttribute('data-paid'));
+    if (!firstWrongDone) {
+      await page.screenshot({ path: `${SHOTS}/33-shift-change.png` });
+      // Too much change first.
+      await page.locator('[data-testid="till-coin"][data-value="20"]').click();
+      await page.locator('[data-testid="give-change"]').click();
+      await page.waitForTimeout(150);
+      check('too much change is not taken', (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'change');
+      check('her purse is untouched mid-shift', JSON.stringify((await save()).purse) === '[10]');
+      await page.getByRole('button', { name: 'Put back', exact: true }).click();
+    }
+    for (const c of coinsFor(paid - price)) {
+      await page.locator(`[data-testid="till-coin"][data-value="${c}"]`).click();
+    }
+    await page.locator('[data-testid="give-change"]').click();
+    await page.waitForTimeout(200);
+    check(`customer ${n + 1}: the change is right (${paid}p - ${price}p)`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'thanks');
+    if (!firstWrongDone) await page.screenshot({ path: `${SHOTS}/34-shift-thanks.png` });
+    firstWrongDone = true;
+    await page.locator('[data-testid="next-customer"]').click();
+    await page.waitForTimeout(800);
+  }
+
+  check('the tip jar holds 5p', (await page.locator('[data-testid="tip-jar"]').getAttribute('data-pennies')) === '5');
+  await page.screenshot({ path: `${SHOTS}/35-shift-payday.png` });
+  await page.locator('[data-testid="collect-wages"]').click();
+  await page.waitForTimeout(1500);
+  const paidSave = await save();
+  check('wages + tips land in her purse: 10p + 25p', paidSave.purse.reduce((a, b) => a + b, 0) === 35, JSON.stringify(paidSave.purse));
+  check('the week is marked as worked', paidSave.shiftWeek === paidSave.week);
+  check('back on the street, the sign says see you next week', (await sign.getAttribute('data-worked')) === 'true');
+  await page.screenshot({ path: `${SHOTS}/36-street-after-shift.png` });
+  await page.reload({ waitUntil: 'networkidle' });
+  await sign.click();
+  check('a reload cannot pay her twice', await page.locator('[data-testid="shift-closed"]').isVisible());
+  check('purse unchanged after the reload', (await save()).purse.reduce((a, b) => a + b, 0) === 35);
 
   console.log('\nPrivacy');
   check('zero off-origin requests', offsite.length === 0, offsite.slice(0, 3).join(', '));

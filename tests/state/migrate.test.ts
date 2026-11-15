@@ -53,6 +53,7 @@ const SAVE_KEYS: ReadonlyArray<keyof SaveData> = [
   'savingGoal',
   'transactionLog',
   'coinErrors',
+  'shiftWeek',
 ];
 
 /* ---------------------------------------------------------------------------
@@ -74,9 +75,10 @@ describe('v1 fixtures', () => {
  * ------------------------------------------------------------------------- */
 
 describe('migrateToCurrent: v1 -> v2 on real captured saves', () => {
-  it.each(FIXTURE_NAMES)('%s becomes schemaVersion 2', (name) => {
+  it.each(FIXTURE_NAMES)('%s becomes the current schema (v3) and has never worked a shift', (name) => {
     expect(migrated(loadFixture(name)).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(migrated(loadFixture(name)).schemaVersion).toBe(2);
+    expect(migrated(loadFixture(name)).schemaVersion).toBe(3);
+    expect(migrated(loadFixture(name)).shiftWeek).toBeNull();
   });
 
   it.each(FIXTURE_NAMES)('%s keeps the purse byte-identical, coin for coin', (name) => {
@@ -125,9 +127,9 @@ describe('migrateToCurrent: v1 -> v2 on real captured saves', () => {
       expect(save[key]).toBeDefined();
       expect(save[key]).not.toBeUndefined();
     }
-    // savingGoal is legitimately null; nothing else may be.
+    // savingGoal and shiftWeek are legitimately null; nothing else may be.
     for (const key of SAVE_KEYS) {
-      if (key === 'savingGoal') continue;
+      if (key === 'savingGoal' || key === 'shiftWeek') continue;
       expect(save[key]).not.toBeNull();
     }
   });
@@ -201,7 +203,7 @@ describe('migrateToCurrent: v1 -> v2 on real captured saves', () => {
  * ------------------------------------------------------------------------- */
 
 describe('migrateToCurrent: v2 saves', () => {
-  const v2: SaveData = {
+  const v2: Omit<SaveData, 'shiftWeek'> = {
     schemaVersion: 2,
     purse: [20, 10, 5],
     moneyBox: [50, 100],
@@ -216,8 +218,25 @@ describe('migrateToCurrent: v2 saves', () => {
     coinErrors: { ...emptyCoinErrors(), 50: 4 },
   };
 
-  it('passes a valid v2 save through unchanged', () => {
-    expect(migrated(structuredClone(v2))).toEqual(v2);
+  it('upgrades a valid v2 save to v3, losing nothing and adding shiftWeek: null', () => {
+    const expected: SaveData = { ...v2, schemaVersion: 3, shiftWeek: null };
+    expect(migrated(structuredClone(v2))).toEqual(expected);
+  });
+
+  it('passes a valid v3 save through unchanged', () => {
+    const v3: SaveData = { ...v2, schemaVersion: 3, shiftWeek: 9 };
+    expect(migrated(structuredClone(v3))).toEqual(v3);
+  });
+
+  it.each([
+    [4, 4],
+    [4.7, 4],
+    [0, null],
+    [-2, null],
+    ['3', null],
+    [null, null],
+  ])('repairs shiftWeek %p to %p', (input, expected) => {
+    expect(migrated({ schemaVersion: 3, shiftWeek: input }).shiftWeek).toBe(expected);
   });
 
   it('repairs missing fields rather than nulling the save', () => {
@@ -238,7 +257,7 @@ describe('migrateToCurrent: v2 saves', () => {
 
   it('ignores unknown extra fields', () => {
     const save = migrated({ ...structuredClone(v2), somethingNew: { a: 1 }, xp: 9000 });
-    expect(save).toEqual(v2);
+    expect(save).toEqual({ ...v2, schemaVersion: 3, shiftWeek: null });
     expect(Object.keys(save).sort()).toEqual([...SAVE_KEYS].sort());
   });
 
@@ -372,16 +391,16 @@ describe('migrateToCurrent: corrupt input', () => {
   });
 
   it('returns null for a save from a FUTURE schema rather than guessing', () => {
-    const v3 = {
-      schemaVersion: 3,
+    const v4 = {
+      schemaVersion: 4,
       purse: [10, 5],
       stage: 2,
       wallet: { balance: 250 },
       transactionLog: [],
       coinErrors: emptyCoinErrors(),
     };
-    expect(migrateToCurrent(v3)).toBeNull();
-    expect(migrateToCurrent({ schemaVersion: 4 })).toBeNull();
+    expect(migrateToCurrent(v4)).toBeNull();
+    expect(migrateToCurrent({ schemaVersion: 5 })).toBeNull();
     expect(migrateToCurrent({ schemaVersion: 99 })).toBeNull();
   });
 

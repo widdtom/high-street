@@ -7,6 +7,7 @@ import GreengrocerScreen from './screens/GreengrocerScreen';
 import ParentScreen from './screens/ParentScreen';
 import PurseScreen from './screens/PurseScreen';
 import SaturdayScreen from './screens/SaturdayScreen';
+import ShiftScreen from './screens/ShiftScreen';
 import StreetScreen from './screens/StreetScreen';
 import ToyshopScreen from './screens/ToyshopScreen';
 import WeekSummaryScreen from './screens/WeekSummaryScreen';
@@ -39,6 +40,8 @@ function CurrentScreen({ screen }: { screen: Screen }) {
       return <WeekSummaryScreen />;
     case 'parent':
       return <ParentScreen />;
+    case 'shift':
+      return <ShiftScreen />;
     case 'street':
     default:
       return <StreetScreen />;

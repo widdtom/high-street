@@ -94,6 +94,8 @@ export interface WeekSummary {
   /** purse + moneyBox at the START of the week. */
   startedWith: Pence;
   spent: Pence;
+  /** Wages and tips from the bakery shift this week. */
+  earned: Pence;
   /** purse + moneyBox now. */
   leftWith: Pence;
   foodEaten: FoodMeter;
@@ -120,9 +122,9 @@ export function heldTotal(save: SaveData): Pence {
  * `startTotal` is purse + moneyBox as it stood at the start of the week; the
  * caller is responsible for having captured it.
  */
-export function summariseWeek(startTotal: Pence, save: SaveData): WeekSummary {
+export function summariseWeek(startTotal: Pence, save: SaveData, earned: Pence = 0): WeekSummary {
   const leftWith = heldTotal(save);
-  const difference = startTotal - leftWith;
+  const difference = startTotal + earned - leftWith;
 
   // Clamped at 0 on purpose. Income (pocket money, wages) and change both land
   // in the purse during a week, so she can finish a week holding MORE than she
@@ -134,6 +136,7 @@ export function summariseWeek(startTotal: Pence, save: SaveData): WeekSummary {
     week: save.week,
     startedWith: startTotal,
     spent,
+    earned,
     leftWith,
     foodEaten: save.foodMeter,
     lightsStayedOn: lightsAreOn(save.electricityDays),
@@ -158,7 +161,7 @@ export function summariseWeek(startTotal: Pence, save: SaveData): WeekSummary {
  * values gives adjacent first outputs, which would make the shelf crawl by one
  * item a week instead of rotating.
  */
-function splitmix32(seed: number): () => number {
+export function splitmix32(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state = (state + 0x9e3779b9) >>> 0;

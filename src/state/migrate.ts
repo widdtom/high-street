@@ -156,6 +156,13 @@ function coerceLog(value: unknown, fallbackStage: Stage): TransactionRecord[] {
   return out;
 }
 
+/** A week number >= 1, or null. Anything else means "never worked a shift". */
+function coerceShiftWeek(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const floored = Math.floor(value);
+  return floored < 1 ? null : floored;
+}
+
 /**
  * Coin-error counts. Always returns all eight keys, so no consumer ever meets
  * an `undefined` count. JSON object keys are strings, hence the String() lookup.
@@ -175,7 +182,7 @@ function coerceCoinErrors(value: unknown): CoinErrorMap {
  * ------------------------------------------------------------------------- */
 
 /**
- * Build a fully-populated v2 SaveData from a loose object. Every field is
+ * Build a fully-populated current (v3) SaveData from a loose object. Every field is
  * repaired independently; no field is ever left `undefined`.
  */
 function coerceCurrent(input: Loose): SaveData {
@@ -193,6 +200,7 @@ function coerceCurrent(input: Loose): SaveData {
     savingGoal: coerceSavingGoal(input.savingGoal),
     transactionLog: coerceLog(input.transactionLog, stage),
     coinErrors: coerceCoinErrors(input.coinErrors),
+    shiftWeek: coerceShiftWeek(input.shiftWeek),
   };
 }
 
@@ -246,9 +254,18 @@ function migrateV1ToV2(input: Loose): Loose {
   };
 }
 
-/** Keyed by the version being migrated FROM. Add `[2, migrateV2ToV3]` next. */
+/**
+ * v2 -> v3. NOTHING IS LOST. The bakery shift arrives; she has never worked
+ * one, so `shiftWeek` starts null and this week's shift is open to her.
+ */
+function migrateV2ToV3(input: Loose): Loose {
+  return { ...input, schemaVersion: 3, shiftWeek: null };
+}
+
+/** Keyed by the version being migrated FROM. Add `[3, migrateV3ToV4]` next. */
 const MIGRATION_STEPS: ReadonlyMap<number, MigrationStep> = new Map<number, MigrationStep>([
   [1, migrateV1ToV2],
+  [2, migrateV2ToV3],
 ]);
 
 /* ---------------------------------------------------------------------------

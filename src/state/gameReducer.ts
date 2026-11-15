@@ -9,13 +9,26 @@
 
 import { checkPayment, minimumCoins, totalOf } from '../engine';
 import { nextWeek, shouldAdvanceStage, nextStage } from '../engine/week';
+import {
+  checkChange,
+  checkOrder,
+  hasWorkedThisWeek,
+  noToppings,
+  shiftCustomers,
+  shiftPay,
+  wageCoins,
+  type ChangeCheck,
+  type OrderCheck,
+  type Topping,
+  type ToppingCounts,
+} from '../engine/shift';
 import type { CoinValue, Pence, Stage } from '../engine/types';
 import {
   ELECTRICITY_WEEKLY,
   FOOD_METER_MAX,
   POCKET_MONEY,
+  SHIFT_CUSTOMERS,
   STAGE_GATED_ITEMS,
-  TEMP_SHIFT_STANDIN,
   itemById,
 } from '../data/economy';
 import { brandNewSave } from './save';
@@ -31,7 +44,8 @@ export type Screen =
   | 'purse'
   | 'bedroom'
   | 'weekSummary'
-  | 'parent';
+  | 'parent'
+  | 'shift';
 
 export type ShopScreen = 'bakery' | 'greengrocer' | 'toyshop' | 'charity';
 
@@ -65,6 +79,51 @@ export const emptyPayment: PaymentState = {
   payAttempts: 0,
 };
 
+/**
+ * The bakery shift in progress. Runtime only, never saved: leaving the bakery
+ * mid-shift simply means starting the queue again next time. Nothing is lost,
+ * because nothing is paid until the last customer has gone.
+ *
+ * Each customer goes through three phases:
+ *   make   — she puts their order on the tray (and toppings on a bun), then
+ *            rings the bell;
+ *   change — they hand over coins and she counts change out of the till;
+ *   thanks — they say thank you and drop 1p in the tip jar.
+ *
+ * `given` holds COIN VALUES, not purse indices. The till is the bakery's, not
+ * hers — it has as many of each coin as she needs, and none of it is her money.
+ */
+export type ShiftPhase = 'make' | 'change' | 'thanks';
+
+export interface ShiftState {
+  /** 0..SHIFT_CUSTOMERS-1 while serving; SHIFT_CUSTOMERS once everyone is served. */
+  customerIndex: number;
+  phase: ShiftPhase;
+  /** Item ids on the serving tray. */
+  tray: string[];
+  /** What she has put on the iced bun. */
+  toppings: ToppingCounts;
+  /** What the customer said when she last rang the bell, until she changes something. */
+  orderReply: OrderCheck | null;
+  /** Coins she has taken out of the till for the current customer. */
+  given: CoinValue[];
+  /** What the customer said when she last pressed Give, until she changes something. */
+  reply: ChangeCheck | null;
+  /** Presses of Give for this customer. After 2 misses the customer offers a hint. */
+  tries: number;
+}
+
+export const freshShift: ShiftState = {
+  customerIndex: 0,
+  phase: 'make',
+  tray: [],
+  toppings: noToppings(),
+  orderReply: null,
+  given: [],
+  reply: null,
+  tries: 0,
+};
+
 export interface GameState {
   save: SaveData;
   screen: Screen;
@@ -73,6 +132,7 @@ export interface GameState {
   payment: PaymentState;
   /** 0,1,2 are the three Saturday beats; 3 means the sequence is finished. */
   saturdayStep: number;
+  shift: ShiftState;
 }
 
 /**
@@ -101,6 +161,7 @@ export function initialState(save: SaveData): GameState {
     previousScreen: 'street',
     payment: emptyPayment,
     saturdayStep: 0,
+    shift: freshShift,
   };
 }
 
@@ -123,7 +184,18 @@ export type GameAction =
   | { type: 'confirmBed' }
   | { type: 'setStage'; stage: Stage }
   | { type: 'importSave'; data: SaveData }
-  | { type: 'resetGame' };
+  | { type: 'resetGame' }
+  | { type: 'trayAdd'; itemId: string }
+  | { type: 'trayRemove'; position: number }
+  | { type: 'toppingAdd'; topping: Topping }
+  | { type: 'toppingRemove'; topping: Topping }
+  | { type: 'serve' }
+  | { type: 'tillAdd'; coin: CoinValue }
+  | { type: 'tillRemove'; position: number }
+  | { type: 'tillClear' }
+  | { type: 'giveChange' }
+  | { type: 'nextCustomer' }
+  | { type: 'collectWages' };
 
 /** The electricity top-up is paid for like anything else, using the same UI. */
 export const ELECTRICITY_ITEM_ID = 'electricity';
@@ -148,6 +220,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
             ? state.previousScreen
             : state.screen,
         payment: leavingShop ? emptyPayment : state.payment,
+        // Walking in to work always starts at the front of the queue.
+        shift: action.screen === 'shift' ? freshShift : state.shift,
       };
     }
 
@@ -270,6 +344,19 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case 'resetGame':
       return initialState(brandNewSave());
 
+    case 'trayAdd':
+    case 'trayRemove':
+    case 'toppingAdd':
+    case 'toppingRemove':
+    case 'serve':
+    case 'tillAdd':
+    case 'tillRemove':
+    case 'tillClear':
+    case 'giveChange':
+    case 'nextCustomer':
+    case 'collectWages':
+      return shiftReducer(state, action);
+
     default:
       return state;
   }
@@ -350,6 +437,141 @@ function applyPayment(
 }
 
 /* ---------------------------------------------------------------------------
+ * The bakery shift
+ * ------------------------------------------------------------------------- */
+
+type ShiftAction = Extract<
+  GameAction,
+  {
+    type:
+      | 'trayAdd'
+      | 'trayRemove'
+      | 'toppingAdd'
+      | 'toppingRemove'
+      | 'serve'
+      | 'tillAdd'
+      | 'tillRemove'
+      | 'tillClear'
+      | 'giveChange'
+      | 'nextCustomer'
+      | 'collectWages';
+  }
+>;
+
+/** The customer she is serving now, or null once the queue is empty. */
+export function currentCustomer(state: GameState) {
+  return shiftCustomers(state.save.week, state.save.stage)[state.shift.customerIndex] ?? null;
+}
+
+export function shiftFinished(state: GameState): boolean {
+  return state.shift.customerIndex >= SHIFT_CUSTOMERS;
+}
+
+/** Pennies in the tip jar so far: one from every customer who has said thank you. */
+export function tipsSoFar(state: GameState): number {
+  return state.shift.customerIndex + (state.shift.phase === 'thanks' ? 1 : 0);
+}
+
+/** Most toppings that fit on one bun. Enough for any order, not endless. */
+const BUN_TOPPING_LIMIT = 12;
+/** Most things on one tray. */
+const TRAY_LIMIT = 4;
+
+function shiftReducer(state: GameState, action: ShiftAction): GameState {
+  const { shift, save } = state;
+  // Once this week's shift is worked, the bakery has no more work for her.
+  const worked = hasWorkedThisWeek(save.shiftWeek, save.week);
+  const serving = !worked && !shiftFinished(state);
+  const making = serving && shift.phase === 'make';
+  const changing = serving && shift.phase === 'change';
+  const withShift = (patch: Partial<ShiftState>): GameState => ({
+    ...state,
+    shift: { ...shift, ...patch },
+  });
+
+  switch (action.type) {
+    case 'trayAdd':
+      if (!making || shift.tray.length >= TRAY_LIMIT) return state;
+      return withShift({ tray: [...shift.tray, action.itemId], orderReply: null });
+
+    case 'trayRemove': {
+      if (!making) return state;
+      const tray = shift.tray.filter((_, i) => i !== action.position);
+      // Taking the bun off the tray takes its toppings with it.
+      const toppings = tray.includes('iced_bun') ? shift.toppings : noToppings();
+      return withShift({ tray, toppings, orderReply: null });
+    }
+
+    case 'toppingAdd': {
+      if (!making || !shift.tray.includes('iced_bun')) return state;
+      const on = shift.toppings.cherry + shift.toppings.button;
+      if (on >= BUN_TOPPING_LIMIT) return state;
+      return withShift({
+        toppings: { ...shift.toppings, [action.topping]: shift.toppings[action.topping] + 1 },
+        orderReply: null,
+      });
+    }
+
+    case 'toppingRemove': {
+      if (!making || shift.toppings[action.topping] === 0) return state;
+      return withShift({
+        toppings: { ...shift.toppings, [action.topping]: shift.toppings[action.topping] - 1 },
+        orderReply: null,
+      });
+    }
+
+    case 'serve': {
+      const customer = currentCustomer(state);
+      if (!making || customer === null || shift.tray.length === 0) return state;
+      const orderReply = checkOrder(shift.tray, shift.toppings, customer);
+      // A wrong order moves nothing: the tray stays as it is, so she can fix it.
+      return withShift({ orderReply, phase: orderReply.kind === 'right' ? 'change' : 'make' });
+    }
+
+    case 'tillAdd':
+      if (!changing) return state;
+      return withShift({ given: [...shift.given, action.coin], reply: null });
+
+    case 'tillRemove':
+      if (!changing) return state;
+      return withShift({ given: shift.given.filter((_, i) => i !== action.position), reply: null });
+
+    case 'tillClear':
+      if (!changing) return state;
+      return withShift({ given: [], reply: null });
+
+    case 'giveChange': {
+      const customer = currentCustomer(state);
+      if (!changing || customer === null) return state;
+      // A wrong amount moves nothing. The coins stay on the counter where she
+      // put them, so she can add one or take one back.
+      const reply = checkChange(shift.given, customer.changeDue);
+      return withShift({
+        reply,
+        tries: shift.tries + 1,
+        phase: reply.kind === 'right' ? 'thanks' : 'change',
+      });
+    }
+
+    case 'nextCustomer':
+      if (!serving || shift.phase !== 'thanks') return state;
+      return { ...state, shift: { ...freshShift, customerIndex: shift.customerIndex + 1 } };
+
+    case 'collectWages':
+      // Paid in the same step that marks the week as worked, so it is
+      // impossible to be paid twice — by a double tap or by a reload.
+      if (worked || !shiftFinished(state)) return state;
+      return {
+        ...state,
+        save: { ...save, purse: [...save.purse, ...wageCoins(save.stage)], shiftWeek: save.week },
+      };
+
+    default:
+      return state;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Selectors
  * ------------------------------------------------------------------------- */
 
@@ -401,25 +623,29 @@ export function spentThisWeek(save: SaveData): Pence {
   return total;
 }
 
+/** What she earned at the bakery this week: a full shift's wages, or nothing. */
+export function earnedThisWeek(save: SaveData): Pence {
+  return hasWorkedThisWeek(save.shiftWeek, save.week) ? shiftPay() : 0;
+}
+
 /**
- * What she had once this week's coins landed. All income arrives at the start
- * of the week, so this is simply what is left plus what has gone.
+ * What she had once this week's pocket money landed, before any wages. Pocket
+ * money arrives at the start of the week and wages arrive mid-week, so this is
+ * what is left, plus what has gone, minus what she earned.
  */
 export function weekStartTotal(save: SaveData): Pence {
-  return allMoneyTotal(save) + spentThisWeek(save);
+  return allMoneyTotal(save) + spentThisWeek(save) - earnedThisWeek(save);
 }
 
-/** This week's income. */
+/** This week's pocket money. Anything more, she earns at the bakery. */
 export function weeklyIncome(): Pence {
-  // TODO: DELETE IN PROMPT 3 — TEMP_SHIFT_STANDIN goes when the shift lands.
-  return POCKET_MONEY + TEMP_SHIFT_STANDIN;
+  return POCKET_MONEY;
 }
 
 /**
- * This week's income as actual coins, in the denominations available at her
- * stage. The Saturday screen shows exactly these landing in her purse.
+ * This week's pocket money as actual coins, in the denominations available at
+ * her stage. The Saturday screen shows exactly these landing in her purse.
  */
 export function incomeCoins(stage: Stage): CoinValue[] {
-  // TODO: DELETE IN PROMPT 3 — the second line goes when the shift lands.
-  return [...minimumCoins(POCKET_MONEY, stage), ...minimumCoins(TEMP_SHIFT_STANDIN, stage)];
+  return minimumCoins(POCKET_MONEY, stage);
 }

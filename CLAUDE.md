@@ -97,6 +97,23 @@ out of the till. Each customer drops 1p in the tip jar.
   is untouched until the wages land at the end.
 - Pocket money is 30p a week; anything more she earns here. `TEMP_SHIFT_STANDIN` is gone.
 
+### The boss's jobs
+
+`src/engine/tasks.ts` + `src/components/shift/BossJobs.tsx`. Mrs Crumb gives three
+different jobs per shift, following `SHIFT_PLAN` (job, 2 customers, job, 2 customers,
+job, 1 customer): roll the dough N times, fill doughnuts (jam/cream counts), finish a
+fruit pattern on a cake, load the oven (top/bottom shelf), sweep crumb piles then say
+how many. All taps, no timers; checks are pure functions in the engine. The jobs'
+half-done work lives in component state; only `taskDone` reaches the reducer.
+
+### Speech
+
+`src/components/speech.ts`. Every line from the boss and customers is spoken with
+`speechSynthesis`, and tapping a bubble repeats it. **Only `localService` (on-device)
+voices are ever used** — a cloud voice would be a network request. No local English
+voice means silence, never a fallback. The voice on/off switch is in localStorage under
+`highstreet.voice`, outside the save. Speech text may contain numerals; the voice reads them.
+
 ## Commands
 
 ```

@@ -265,3 +265,33 @@ export function wageCoins(stage: Stage): CoinValue[] {
 export function hasWorkedThisWeek(shiftWeek: number | null, week: number): boolean {
   return shiftWeek === week;
 }
+
+/** How each bakery item is said out loud, with its "a" or "an". */
+const SPOKEN: Record<string, string> = {
+  roll: 'a bread roll',
+  banana_loaf: 'a banana loaf',
+  iced_bun: 'an iced bun',
+  loaf: 'a loaf of bread',
+  sausage_roll: 'a sausage roll',
+};
+
+const TOPPING_WORDS: Record<Topping, { one: string; many: string }> = {
+  cherry: { one: 'cherry', many: 'cherries' },
+  button: { one: 'chocolate button', many: 'chocolate buttons' },
+};
+
+/**
+ * The customer's order as a sentence, for the speech bubble and the voice:
+ * "Can I have an iced bun with 3 cherries on top and a bread roll, please?"
+ */
+export function orderSentence(customer: Pick<Customer, 'itemIds' | 'toppings'>): string {
+  const parts = customer.itemIds.map((id) => {
+    const said = SPOKEN[id] ?? id;
+    if (id !== 'iced_bun') return said;
+    if (customer.toppings === null) return 'a plain iced bun';
+    const { kind, count } = customer.toppings;
+    const word = count === 1 ? TOPPING_WORDS[kind].one : TOPPING_WORDS[kind].many;
+    return `${said} with ${count} ${word} on top`;
+  });
+  return `Can I have ${parts.join(' and ')}, please?`;
+}

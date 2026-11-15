@@ -3,8 +3,12 @@
  *
  * In the spirit of "Good Pizza, Great Pizza": a regular walks in and asks for
  * something, she makes it, rings the bell, takes their coins and counts change
- * out of the till. Each happy customer drops 1p in the tip jar. After the last
- * one she is paid her wage and takes the tip jar home.
+ * out of the till. Each happy customer drops 1p in the tip jar. In between,
+ * Mrs Crumb the boss gives her jobs (components/shift/BossJobs.tsx). At the end
+ * she is paid her wage and takes the tip jar home.
+ *
+ * Everyone SPEAKS their lines (components/speech.ts, on-device voices only),
+ * and tapping a speech bubble says it again.
  *
  * What it deliberately does NOT borrow: there is no timer, no patience meter,
  * no rating, no star and no upgrade shop. A customer waits as long as she needs.
@@ -20,16 +24,21 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import CoinSVG from '../components/coins/CoinSVG';
-import CustomerArt, { type CustomerMood } from '../components/CustomerArt';
+import CustomerArt, { BOSS_LOOK, type CustomerMood } from '../components/CustomerArt';
+import { TaskStep } from '../components/shift/BossJobs';
+import Speech from '../components/shift/Speech';
+import { CAST_VOICES, useVoiceSwitch } from '../components/speech';
 import ItemArt from '../components/ItemArt';
 import PriceTag from '../components/PriceTag';
 import { BunWithToppings, TOPPING_NAME, ToppingIcon } from '../components/ToppingArt';
 import { BAKERY_ITEMS, SHIFT_BASE_WAGE, SHIFT_CUSTOMERS } from '../data/economy';
 import { coinsForStage, formatMoney, minimumCoins, totalOf } from '../engine';
-import { CAST, TOPPINGS, hasWorkedThisWeek, type Customer } from '../engine/shift';
+import { CAST, TOPPINGS, hasWorkedThisWeek, orderSentence, type Customer } from '../engine/shift';
+import { SHIFT_PLAN } from '../engine/tasks';
 import type { CoinValue, Stage } from '../engine/types';
 import {
   currentCustomer,
+  currentTask,
   shiftFinished,
   tipsSoFar,
   type GameState,
@@ -89,20 +98,50 @@ function TipJar({ pennies }: { pennies: number }) {
   );
 }
 
-/** One little face per customer in today's queue. Not a score — just where we are. */
-function Queue({ served, current }: { served: number; current: number }) {
+/**
+ * Where she is in today's shift: a round dot for each customer, a square for
+ * each of the boss's jobs. Not a score — just where we are.
+ */
+function Progress({ step }: { step: number }) {
   return (
-    <div className="flex items-center gap-1.5" aria-label={`Customer ${current + 1} of ${SHIFT_CUSTOMERS}`}>
-      {Array.from({ length: SHIFT_CUSTOMERS }, (_, i) => (
+    <div className="flex items-center gap-1.5" aria-label={`Step ${step + 1} of ${SHIFT_PLAN.length}`}>
+      {SHIFT_PLAN.map((s, i) => (
         <span
           key={i}
           className={[
-            'h-4 w-4 rounded-full border-2 border-white transition',
-            i < served ? 'bg-white' : i === current ? 'bg-white/60 scale-125' : 'bg-transparent',
+            'h-4 w-4 border-2 border-white transition',
+            s.kind === 'task' ? 'rounded-[3px]' : 'rounded-full',
+            i < step ? 'bg-white' : i === step ? 'scale-125 bg-white/60' : 'bg-transparent',
           ].join(' ')}
         />
       ))}
     </div>
+  );
+}
+
+function VoiceButton() {
+  const [on, toggle] = useVoiceSwitch();
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={on}
+      aria-label={on ? 'Voices on' : 'Voices off'}
+      data-testid="voice-toggle"
+      className="tappable rounded-full bg-white/25 p-1.5 active:scale-90"
+    >
+      <svg viewBox="0 0 24 24" className="h-7 w-7" role="presentation">
+        <path d="M3 9 H7 L12 5 V19 L7 15 H3 Z" fill="white" />
+        {on ? (
+          <>
+            <path d="M15.5 8.5 Q18 12 15.5 15.5" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" />
+            <path d="M18 6 Q22 12 18 18" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" />
+          </>
+        ) : (
+          <path d="M15 9 L21 15 M21 9 L15 15" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+        )}
+      </svg>
+    </button>
   );
 }
 
@@ -122,8 +161,9 @@ function Header({ state, onBack }: { state: GameState; onBack: () => void }) {
         <BackArrow />
       </button>
       <h1 className="text-2xl font-black tracking-wide">Bakery shift</h1>
-      {!finished && <Queue served={tipsSoFar(state)} current={state.shift.customerIndex} />}
-      <div className="ml-auto">
+      {!finished && <Progress step={state.shift.step} />}
+      <div className="ml-auto flex items-center gap-2">
+        <VoiceButton />
         <TipJar pennies={tipsSoFar(state)} />
       </div>
     </div>
@@ -162,28 +202,19 @@ function OrderPictures({ customer, size = 64 }: { customer: Customer; size?: num
   );
 }
 
-function SpeechBubble({ children }: { children: ReactNode }) {
-  return (
-    <div
-      data-testid="speech"
-      className="relative flex min-w-[16rem] max-w-[34rem] flex-col gap-2 rounded-3xl border-4 border-amber-900/15 bg-white px-5 py-3 shadow-lg"
-    >
-      {/* Tail pointing at the customer on the left */}
-      <span className="absolute -left-4 top-10 h-0 w-0 border-y-[12px] border-r-[16px] border-y-transparent border-r-white" />
-      {children}
-    </div>
-  );
-}
-
-function Line({ children }: { children: ReactNode }) {
-  return <p className="text-2xl font-bold leading-snug text-amber-950">{children}</p>;
-}
-
 /* ---------------------------------------------------------------------------
  * What the customer says
  * ------------------------------------------------------------------------- */
 
-function whatTheySay(state: GameState, customer: Customer, stage: Stage): { mood: CustomerMood; node: ReactNode } {
+interface Said {
+  mood: CustomerMood;
+  /** Shown in the bubble and spoken aloud. */
+  text: string;
+  /** Pictures under the words. */
+  pictures?: ReactNode;
+}
+
+function whatTheySay(state: GameState, customer: Customer, stage: Stage): Said {
   const { shift } = state;
   const who = CAST[customer.look] ?? CAST[0];
   const paid = totalOf([...customer.handedOver]);
@@ -193,70 +224,38 @@ function whatTheySay(state: GameState, customer: Customer, stage: Stage): { mood
     if (r === null) {
       return {
         mood: 'waiting',
-        node: (
-          <>
-            <Line>
-              {who.hello} Can I have…
-            </Line>
-            <OrderPictures customer={customer} size={88} />
-          </>
-        ),
+        text: `${who.hello} ${orderSentence(customer)}`,
+        pictures: <OrderPictures customer={customer} />,
       };
     }
-    const line =
+    const text =
       r.kind === 'missing'
         ? 'Hmm, I think something’s missing.'
         : r.kind === 'extra'
           ? 'Oh! That’s more than I asked for.'
           : r.kind === 'toppings' && customer.toppings !== null
-            ? `Can you count the ${TOPPING_NAME[r.topping].many} again?`
+            ? `Can you count the ${TOPPING_NAME[r.topping].many} again? I’d like ${customer.toppings.count}.`
             : 'I’d like my bun plain, please.';
-    return {
-      mood: 'thinking',
-      node: (
-        <>
-          <Line>{line}</Line>
-          <OrderPictures customer={customer} size={64} />
-        </>
-      ),
-    };
+    return { mood: 'thinking', text, pictures: <OrderPictures customer={customer} size={64} /> };
   }
 
   if (shift.phase === 'change') {
     const r = shift.reply;
-    if (r === null) {
-      return {
-        mood: 'waiting',
-        node: <Line>Lovely, thank you! Here’s my money.</Line>,
-      };
-    }
-    const hint =
-      shift.tries >= 2 && customer.changeDue > 0 ? (
-        <p className="text-lg font-semibold text-sky-800">
-          Count up from {formatMoney(customer.price, stage)} to {formatMoney(paid, stage)}.
-        </p>
-      ) : null;
+    if (r === null) return { mood: 'waiting', text: 'Lovely, thank you! Here’s my money.' };
     const line =
       customer.changeDue === 0
         ? 'I gave you just the right money — no change needed!'
         : r.kind === 'short'
           ? 'I think I need a bit more change.'
           : 'That’s a bit too much change.';
-    return {
-      mood: 'thinking',
-      node: (
-        <>
-          <Line>{line}</Line>
-          {hint}
-        </>
-      ),
-    };
+    const hint =
+      shift.tries >= 2 && customer.changeDue > 0
+        ? ` Count up from ${formatMoney(customer.price, stage)} to ${formatMoney(paid, stage)}.`
+        : '';
+    return { mood: 'thinking', text: line + hint };
   }
 
-  return {
-    mood: 'happy',
-    node: <Line>Thank you! Here’s a penny for your tip jar. Bye!</Line>,
-  };
+  return { mood: 'happy', text: 'Thank you! Here’s a penny for your tip jar. Bye!' };
 }
 
 /* ---------------------------------------------------------------------------
@@ -264,7 +263,7 @@ function whatTheySay(state: GameState, customer: Customer, stage: Stage): { mood
  * ------------------------------------------------------------------------- */
 
 function ShopFloor({ state, customer }: { state: GameState; customer: Customer }) {
-  const { mood, node } = whatTheySay(state, customer, state.save.stage);
+  const said = whatTheySay(state, customer, state.save.stage);
   const who = CAST[customer.look] ?? CAST[0];
 
   // Each customer walks in from the right. CSS transitions only.
@@ -273,7 +272,7 @@ function ShopFloor({ state, customer }: { state: GameState; customer: Customer }
     setArrived(false);
     const t = setTimeout(() => setArrived(true), 30);
     return () => clearTimeout(t);
-  }, [state.shift.customerIndex]);
+  }, [state.shift.step]);
 
   return (
     <div className="relative flex min-h-0 flex-1 items-end gap-5 overflow-hidden bg-gradient-to-b from-[#fbe9d0] to-[#f6dcb8] px-6 pt-2">
@@ -302,15 +301,16 @@ function ShopFloor({ state, customer }: { state: GameState; customer: Customer }
         data-testid="customer"
         data-look={customer.look}
       >
-        <CustomerArt look={customer.look} mood={mood} size={250} />
+        <CustomerArt look={customer.look} mood={said.mood} size={250} />
       </div>
 
       <div
         className="relative mb-10 flex flex-col gap-1 transition-opacity duration-500"
         style={{ opacity: arrived ? 1 : 0, transitionDelay: arrived ? '450ms' : '0ms' }}
       >
-        <span className="ml-3 text-lg font-black text-amber-900/70">{who.name}</span>
-        <SpeechBubble>{node}</SpeechBubble>
+        <Speech name={who.name} text={said.text} voice={CAST_VOICES[customer.look] ?? CAST_VOICES[0]!}>
+          {said.pictures}
+        </Speech>
       </div>
     </div>
   );
@@ -653,6 +653,7 @@ export default function ShiftScreen() {
   const worked = hasWorkedThisWeek(save.shiftWeek, save.week);
   const finished = shiftFinished(state);
   const customer = currentCustomer(state);
+  const task = currentTask(state);
   const back = () => dispatch({ type: 'go', screen: 'street' });
 
   let body: ReactNode;
@@ -660,14 +661,23 @@ export default function ShiftScreen() {
     // She has already worked this week. One shift a week; nothing else to say.
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#fbe9d0] p-6" data-testid="shift-closed">
-        <CustomerArt look={4} mood="happy" size={150} />
+        <CustomerArt look={BOSS_LOOK} mood="happy" size={150} />
         <p className="text-3xl font-black text-amber-900">Thanks for your help this week!</p>
         <p className="text-2xl font-semibold text-amber-800">Come back next week.</p>
       </div>
     );
-  } else if (finished || customer === null) {
+  } else if (finished) {
     body = <PayDay stage={save.stage} />;
-  } else {
+  } else if (task !== null) {
+    body = (
+      <TaskStep
+        key={shift.step}
+        task={task}
+        first={shift.step === 0}
+        onNext={() => dispatch({ type: 'taskDone' })}
+      />
+    );
+  } else if (customer !== null) {
     body = (
       <div className="flex h-full flex-col">
         <ShopFloor state={state} customer={customer} />
@@ -681,7 +691,7 @@ export default function ShiftScreen() {
           {shift.phase === 'make' && <MakeCounter state={state} />}
           {shift.phase === 'change' && <ChangeCounter state={state} customer={customer} />}
           {shift.phase === 'thanks' && (
-            <ThanksCounter key={shift.customerIndex} last={shift.customerIndex === SHIFT_CUSTOMERS - 1} />
+            <ThanksCounter key={shift.step} last={shift.step === SHIFT_PLAN.length - 1} />
           )}
         </div>
       </div>

@@ -3,9 +3,12 @@ import {
   ELECTRICITY_ITEM_ID,
   allMoneyTotal,
   currentCustomer,
+  currentStep,
+  currentTask,
   earnedThisWeek,
   freshShift,
   shiftFinished,
+  tipsSoFar,
   gameReducer,
   initialState,
   moneyBoxTotal,
@@ -19,6 +22,7 @@ import { freshSave, type SaveData } from '../../src/state/saveTypes';
 import type { CoinValue, Stage } from '../../src/engine/types';
 import { minimumCoins } from '../../src/engine';
 import { SHIFT_CUSTOMERS } from '../../src/data/economy';
+import { SHIFT_PLAN } from '../../src/engine/tasks';
 
 function stateWith(patch: Partial<SaveData>): GameState {
   const base = initialState({ ...freshSave(), ...patch });
@@ -383,8 +387,9 @@ describe('the bakery shift', () => {
   const atWork = (patch: Partial<SaveData> = {}): GameState =>
     gameReducer(stateWith(patch), { type: 'go', screen: 'shift' });
 
-  /** Make the order, then give the right change, for the current customer. */
+  /** Do the current job, or make the order and give the right change. */
   function serveRight(s: GameState): GameState {
+    if (currentStep(s)?.kind === 'task') return gameReducer(s, { type: 'taskDone' });
     const c = currentCustomer(s);
     if (c === null) throw new Error('no customer');
     for (const id of c.itemIds) s = gameReducer(s, { type: 'trayAdd', itemId: id });
@@ -403,15 +408,25 @@ describe('the bakery shift', () => {
     return gameReducer(s, { type: 'nextCustomer' });
   }
 
-  it('starts at the front of the queue, making the first order', () => {
-    const s = atWork();
+  it('starts with a job from the boss, then the first customer', () => {
+    let s = atWork();
     expect(s.screen).toBe('shift');
     expect(s.shift).toEqual(freshShift);
+    expect(currentTask(s)).not.toBeNull();
+    expect(currentCustomer(s)).toBeNull();
+    // Counter actions do nothing while she is busy with a job.
+    expect(gameReducer(s, { type: 'trayAdd', itemId: 'roll' })).toBe(s);
+    s = gameReducer(s, { type: 'taskDone' });
     expect(currentCustomer(s)).not.toBeNull();
+    // ...and taskDone does nothing while a customer is waiting.
+    expect(gameReducer(s, { type: 'taskDone' })).toBe(s);
   });
 
+  /** Walk past the first job to the first customer. */
+  const toFirstCustomer = (s: GameState): GameState => gameReducer(s, { type: 'taskDone' });
+
   it('a wrong order moves nothing and costs nothing', () => {
-    let s = atWork({ purse: [10] });
+    let s = toFirstCustomer(atWork({ purse: [10] }));
     s = gameReducer(s, { type: 'trayAdd', itemId: 'no_such_thing' });
     s = gameReducer(s, { type: 'serve' });
     expect(s.shift.phase).toBe('make');
@@ -421,12 +436,12 @@ describe('the bakery shift', () => {
   });
 
   it('cannot ring the bell with an empty tray', () => {
-    const s = atWork();
+    const s = toFirstCustomer(atWork());
     expect(gameReducer(s, { type: 'serve' })).toBe(s);
   });
 
   it('toppings need a bun, and go when the bun goes', () => {
-    let s = atWork();
+    let s = toFirstCustomer(atWork());
     expect(gameReducer(s, { type: 'toppingAdd', topping: 'cherry' }).shift.toppings.cherry).toBe(0);
     s = gameReducer(s, { type: 'trayAdd', itemId: 'iced_bun' });
     s = gameReducer(s, { type: 'toppingAdd', topping: 'cherry' });
@@ -438,7 +453,7 @@ describe('the bakery shift', () => {
   });
 
   it('wrong change keeps the coins on the counter and costs nothing', () => {
-    let s = atWork({ purse: [5] });
+    let s = toFirstCustomer(atWork({ purse: [5] }));
     const c = currentCustomer(s);
     if (c === null) throw new Error('no customer');
     for (const id of c.itemIds) s = gameReducer(s, { type: 'trayAdd', itemId: id });
@@ -457,11 +472,12 @@ describe('the bakery shift', () => {
 
   it('pays wages plus the tip jar once, at the end, and only once a week', () => {
     let s = atWork({ purse: [] });
-    for (let i = 0; i < SHIFT_CUSTOMERS; i++) {
+    for (let i = 0; i < SHIFT_PLAN.length; i++) {
       expect(s.save.purse).toEqual([]); // nothing is paid mid-shift
       s = serveRight(s);
     }
     expect(shiftFinished(s)).toBe(true);
+    expect(tipsSoFar(s)).toBe(SHIFT_CUSTOMERS);
     s = gameReducer(s, { type: 'collectWages' });
     expect(purseTotal(s.save)).toBe(25);
     expect(s.save.shiftWeek).toBe(1);
@@ -484,6 +500,6 @@ describe('the bakery shift', () => {
     s = gameReducer(gameReducer(s, { type: 'goToBed' }), { type: 'confirmBed' });
     expect(earnedThisWeek(s.save)).toBe(0);
     s = gameReducer(s, { type: 'go', screen: 'shift' });
-    expect(gameReducer(s, { type: 'trayAdd', itemId: 'roll' }).shift.tray).toEqual(['roll']);
+    expect(gameReducer(s, { type: 'taskDone' }).shift.step).toBe(1);
   });
 });

@@ -256,7 +256,7 @@ try {
     await page.screenshot({ path: `${SHOTS}/2${SHOPS.indexOf(SHOPS.find((s) => s[0] === shop))}-${shop.replace(/\s+/g, '-')}.png` });
   }
 
-  console.log('\nThe bakery shift: five customers, wages and the tip jar');
+  console.log('\nThe bakery shift: the boss\'s jobs, five customers, wages and the tip jar');
   await page.evaluate(() => {
     const k = 'highstreet.save.v2';
     const s = JSON.parse(localStorage.getItem(k));
@@ -279,14 +279,87 @@ try {
     return out;
   };
 
+  /** Do whichever of the boss's jobs is on screen, right first time. */
+  async function doJob(shotName) {
+    const job = page.locator('[data-testid="job"]');
+    const kind = await job.getAttribute('data-job');
+    const done = page.locator('[data-testid="job-done"]');
+    if (await done.count()) {
+      // Pressing Done with nothing done: one calm line, nothing else.
+      const before = await page.locator('[data-testid="speech"]').getAttribute('data-text');
+      await done.click();
+      await page.waitForTimeout(150);
+      const after = await page.locator('[data-testid="speech"]').getAttribute('data-text');
+      check(`${kind}: not-done-yet gets a calm line from the boss`, before !== after && (await page.locator('[data-testid="task-step"]').getAttribute('data-finished')) === 'false', after);
+    }
+    if (kind === 'roll') {
+      const n = Number(await job.getAttribute('data-rolls'));
+      for (let i = 0; i < n; i += 1) await page.locator('[data-testid="rolling-pin"]').click();
+      await page.waitForTimeout(1100);
+    } else if (kind === 'fill') {
+      const jam = Number(await job.getAttribute('data-jam'));
+      const cream = Number(await job.getAttribute('data-cream'));
+      await page.locator('[data-testid="filling"][data-filling="jam"]').click();
+      for (let i = 0; i < jam; i += 1) await page.locator('[data-testid="doughnut"]').nth(i).click();
+      await page.locator('[data-testid="filling"][data-filling="cream"]').click();
+      for (let i = 0; i < cream; i += 1) await page.locator('[data-testid="doughnut"]').nth(jam + i).click();
+      await done.click();
+    } else if (kind === 'decorate') {
+      const pattern = (await job.getAttribute('data-pattern')).split(',');
+      const given = Number(await job.getAttribute('data-given'));
+      for (let i = given; i < pattern.length; i += 1) {
+        await page.locator(`[data-testid="fruit"][data-fruit="${pattern[i]}"]`).click();
+        await page.locator('[data-testid="cake-slot"]').nth(i).click();
+      }
+      await done.click();
+    } else if (kind === 'oven') {
+      const want = JSON.parse(await job.getAttribute('data-oven'));
+      for (const shelf of ['top', 'bottom']) {
+        await page.locator(`[data-testid="oven-item"][data-item="${want[shelf].item}"]`).click();
+        for (let i = 0; i < want[shelf].count; i += 1) {
+          await page.locator(`[data-testid="shelf-add"][data-shelf="${shelf}"]`).click();
+        }
+      }
+      await done.click();
+      await page.waitForTimeout(2500);
+    } else if (kind === 'sweep') {
+      const n = Number(await job.getAttribute('data-piles'));
+      for (let i = 0; i < n; i += 1) {
+        await page.locator('[data-testid="crumbs"][data-swept="false"]').first().click();
+      }
+      await page.waitForTimeout(900);
+      check('sweep: the dustpan shows every pile', (await page.locator('[data-testid="dustpan"]').getAttribute('data-count')) === String(n));
+      await page.locator(`[data-testid="count-choice"][data-value="${n}"]`).click();
+    }
+    await page.waitForTimeout(200);
+    check(`${kind}: the job is done`, (await page.locator('[data-testid="task-step"]').getAttribute('data-finished')) === 'true');
+    if (shotName) await page.screenshot({ path: `${SHOTS}/${shotName}` });
+    await page.locator('[data-testid="task-next"]').click();
+    await page.waitForTimeout(900);
+  }
+
   let firstWrongDone = false;
-  for (let n = 0; n < 5; n += 1) {
+  let jobs = 0;
+  let customers = 0;
+  for (let n = 0; n < 8; n += 1) {
+    if (await page.locator('[data-testid="task-step"]').count()) {
+      jobs += 1;
+      if (jobs === 1) {
+        const text = await page.locator('[data-testid="speech"]').getAttribute('data-text');
+        check('the boss says hello and asks for a job', text.startsWith('Hello!'), text);
+      }
+      await doJob(`37-job-${jobs}.png`);
+      continue;
+    }
+    customers += 1;
     const order = page.locator('[data-testid="order"]');
     const items = (await order.getAttribute('data-items')).split(',');
     const kind = await order.getAttribute('data-topping-kind');
     const toppingCount = kind
       ? Number(await page.locator('[data-testid="order-toppings"]').getAttribute('data-count'))
       : 0;
+    const said = await page.locator('[data-testid="speech"]').getAttribute('data-text');
+    check(`customer ${customers}: says their order out loud`, said.includes('Can I have'), said);
 
     if (!firstWrongDone) {
       // A wrong order first: nothing moves, the customer just asks again.
@@ -305,10 +378,9 @@ try {
     for (let i = 0; i < toppingCount; i += 1) {
       await page.locator(`[data-testid="topping-button"][data-kind="${kind}"]`).click();
     }
-    if (toppingCount > 0 && !firstWrongDone) await page.screenshot({ path: `${SHOTS}/32-shift-toppings.png` });
     await page.locator('[data-testid="serve"]').click();
     await page.waitForTimeout(150);
-    check(`customer ${n + 1}: the order is right`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'change');
+    check(`customer ${customers}: the order is right`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'change');
 
     const price = Number(await page.locator('[data-testid="order-price"]').getAttribute('data-price'));
     const paid = Number(await page.locator('[data-testid="handed-over"]').getAttribute('data-paid'));
@@ -327,12 +399,13 @@ try {
     }
     await page.locator('[data-testid="give-change"]').click();
     await page.waitForTimeout(200);
-    check(`customer ${n + 1}: the change is right (${paid}p - ${price}p)`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'thanks');
+    check(`customer ${customers}: the change is right (${paid}p - ${price}p)`, (await page.locator('[data-testid="work-area"]').getAttribute('data-phase')) === 'thanks');
     if (!firstWrongDone) await page.screenshot({ path: `${SHOTS}/34-shift-thanks.png` });
     firstWrongDone = true;
     await page.locator('[data-testid="next-customer"]').click();
     await page.waitForTimeout(800);
   }
+  check('three jobs and five customers', jobs === 3 && customers === 5, `jobs=${jobs} customers=${customers}`);
 
   check('the tip jar holds 5p', (await page.locator('[data-testid="tip-jar"]').getAttribute('data-pennies')) === '5');
   await page.screenshot({ path: `${SHOTS}/35-shift-payday.png` });

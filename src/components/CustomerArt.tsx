@@ -169,7 +169,36 @@ const LOOKS: Look[] = [
       </g>
     ),
   },
+  // 6 Mrs Crumb, the boss — red curls, a little baker's cap, a floury apron.
+  {
+    skin: '#f4cdb0',
+    body: '#e98aa8',
+    trim: '#c76a88',
+    hair: '#c4552d',
+    top: (
+      <g>
+        <circle cx="34" cy="52" r="9" fill="#c4552d" />
+        <circle cx="86" cy="52" r="9" fill="#c4552d" />
+        <circle cx="38" cy="66" r="7" fill="#c4552d" />
+        <circle cx="82" cy="66" r="7" fill="#c4552d" />
+        <path d="M38 38 Q38 22 60 22 Q82 22 82 38 Z" fill="#ffffff" stroke="#ddd" strokeWidth="1.5" />
+        <rect x="36" y="34" width="48" height="8" rx="3" fill="#ffffff" stroke="#ddd" strokeWidth="1.5" />
+      </g>
+    ),
+    chest: (
+      <g>
+        <path d="M40 104 H80 V140 H40 Z" fill="#ffffff" />
+        <path d="M40 104 L34 96 M80 104 L86 96" stroke="#ffffff" strokeWidth="4" />
+        <rect x="50" y="116" width="20" height="12" rx="3" fill="#f3e6d6" />
+        <circle cx="46" cy="132" r="2" fill="#f0e2cc" />
+        <circle cx="72" cy="110" r="2.5" fill="#f0e2cc" />
+      </g>
+    ),
+  },
 ];
+
+/** The look index of Mrs Crumb, who runs the bakery. Not one of the customers. */
+export const BOSS_LOOK = 6;
 
 export default function CustomerArt({
   look,

@@ -1,3 +1,4 @@
+import { unlockSpeech } from '../components/speech';
 import { hasWorkedThisWeek } from '../engine/shift';
 import type { Screen } from '../state/gameReducer';
 import { useGame } from '../state/GameContext';
@@ -165,7 +166,14 @@ export default function StreetScreen() {
                 onEnter={() => dispatch({ type: 'go', screen: shop.id as Screen })}
               />
               {shop.id === 'bakery' && (
-                <HelpWanted worked={worked} onTap={() => dispatch({ type: 'go', screen: 'shift' })} />
+                <HelpWanted
+                  worked={worked}
+                  onTap={() => {
+                    // iPad Safari only allows speech after a tap: open the door now.
+                    unlockSpeech();
+                    dispatch({ type: 'go', screen: 'shift' });
+                  }}
+                />
               )}
             </div>
           ))}

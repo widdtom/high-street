@@ -22,12 +22,12 @@ import {
   type Topping,
   type ToppingCounts,
 } from '../engine/shift';
+import { SHIFT_PLAN, shiftTasks, type ShiftStep, type Task } from '../engine/tasks';
 import type { CoinValue, Pence, Stage } from '../engine/types';
 import {
   ELECTRICITY_WEEKLY,
   FOOD_METER_MAX,
   POCKET_MONEY,
-  SHIFT_CUSTOMERS,
   STAGE_GATED_ITEMS,
   itemById,
 } from '../data/economy';
@@ -84,6 +84,9 @@ export const emptyPayment: PaymentState = {
  * mid-shift simply means starting the queue again next time. Nothing is lost,
  * because nothing is paid until the last customer has gone.
  *
+ * The shift follows SHIFT_PLAN: the boss's jobs in between the customers. A job
+ * is done with its own little hands-on screen and finishes with 'taskDone'.
+ *
  * Each customer goes through three phases:
  *   make   — she puts their order on the tray (and toppings on a bun), then
  *            rings the bell;
@@ -96,8 +99,8 @@ export const emptyPayment: PaymentState = {
 export type ShiftPhase = 'make' | 'change' | 'thanks';
 
 export interface ShiftState {
-  /** 0..SHIFT_CUSTOMERS-1 while serving; SHIFT_CUSTOMERS once everyone is served. */
-  customerIndex: number;
+  /** Index into SHIFT_PLAN. SHIFT_PLAN.length once the shift is over. */
+  step: number;
   phase: ShiftPhase;
   /** Item ids on the serving tray. */
   tray: string[];
@@ -114,7 +117,7 @@ export interface ShiftState {
 }
 
 export const freshShift: ShiftState = {
-  customerIndex: 0,
+  step: 0,
   phase: 'make',
   tray: [],
   toppings: noToppings(),
@@ -195,7 +198,8 @@ export type GameAction =
   | { type: 'tillClear' }
   | { type: 'giveChange' }
   | { type: 'nextCustomer' }
-  | { type: 'collectWages' };
+  | { type: 'collectWages' }
+  | { type: 'taskDone' };
 
 /** The electricity top-up is paid for like anything else, using the same UI. */
 export const ELECTRICITY_ITEM_ID = 'electricity';
@@ -355,6 +359,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case 'giveChange':
     case 'nextCustomer':
     case 'collectWages':
+    case 'taskDone':
       return shiftReducer(state, action);
 
     default:
@@ -454,22 +459,42 @@ type ShiftAction = Extract<
       | 'tillClear'
       | 'giveChange'
       | 'nextCustomer'
-      | 'collectWages';
+      | 'collectWages'
+      | 'taskDone';
   }
 >;
 
-/** The customer she is serving now, or null once the queue is empty. */
+/** Where she is in the shift, or null once it is over. */
+export function currentStep(state: GameState): ShiftStep | null {
+  return SHIFT_PLAN[state.shift.step] ?? null;
+}
+
+/** The customer she is serving now, or null if this step is a job (or the shift is over). */
 export function currentCustomer(state: GameState) {
-  return shiftCustomers(state.save.week, state.save.stage)[state.shift.customerIndex] ?? null;
+  const step = currentStep(state);
+  if (step?.kind !== 'customer') return null;
+  return shiftCustomers(state.save.week, state.save.stage)[step.index] ?? null;
+}
+
+/** The job the boss has given her now, or null if this step is a customer. */
+export function currentTask(state: GameState): Task | null {
+  const step = currentStep(state);
+  if (step?.kind !== 'task') return null;
+  return shiftTasks(state.save.week, state.save.stage)[step.index] ?? null;
 }
 
 export function shiftFinished(state: GameState): boolean {
-  return state.shift.customerIndex >= SHIFT_CUSTOMERS;
+  return state.shift.step >= SHIFT_PLAN.length;
 }
 
 /** Pennies in the tip jar so far: one from every customer who has said thank you. */
 export function tipsSoFar(state: GameState): number {
-  return state.shift.customerIndex + (state.shift.phase === 'thanks' ? 1 : 0);
+  let served = 0;
+  for (let i = 0; i < state.shift.step && i < SHIFT_PLAN.length; i++) {
+    if (SHIFT_PLAN[i]?.kind === 'customer') served += 1;
+  }
+  const thanking = currentStep(state)?.kind === 'customer' && state.shift.phase === 'thanks';
+  return served + (thanking ? 1 : 0);
 }
 
 /** Most toppings that fit on one bun. Enough for any order, not endless. */
@@ -482,8 +507,9 @@ function shiftReducer(state: GameState, action: ShiftAction): GameState {
   // Once this week's shift is worked, the bakery has no more work for her.
   const worked = hasWorkedThisWeek(save.shiftWeek, save.week);
   const serving = !worked && !shiftFinished(state);
-  const making = serving && shift.phase === 'make';
-  const changing = serving && shift.phase === 'change';
+  const atCounter = serving && currentStep(state)?.kind === 'customer';
+  const making = atCounter && shift.phase === 'make';
+  const changing = atCounter && shift.phase === 'change';
   const withShift = (patch: Partial<ShiftState>): GameState => ({
     ...state,
     shift: { ...shift, ...patch },
@@ -554,8 +580,14 @@ function shiftReducer(state: GameState, action: ShiftAction): GameState {
     }
 
     case 'nextCustomer':
-      if (!serving || shift.phase !== 'thanks') return state;
-      return { ...state, shift: { ...freshShift, customerIndex: shift.customerIndex + 1 } };
+      if (!atCounter || shift.phase !== 'thanks') return state;
+      return { ...state, shift: { ...freshShift, step: shift.step + 1 } };
+
+    case 'taskDone':
+      // The job screens check their own work with the pure checks in
+      // engine/tasks.ts and only send this once it is right.
+      if (!serving || currentStep(state)?.kind !== 'task') return state;
+      return { ...state, shift: { ...freshShift, step: shift.step + 1 } };
 
     case 'collectWages':
       // Paid in the same step that marks the week as worked, so it is
